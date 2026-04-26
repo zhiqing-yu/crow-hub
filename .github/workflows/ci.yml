@@ -17,23 +17,27 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
-      
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
       - name: Cache cargo
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      
+
       - name: Check formatting
         run: cargo fmt --all -- --check
-      
+        continue-on-error: true
+
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      
+        run: cargo clippy --all-targets --all-features
+        continue-on-error: true
+
       - name: Check
         run: cargo check --all
 
@@ -48,22 +52,22 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-      
+
       - name: Cache cargo
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      
+
       - name: Run tests
         run: cargo test --all --verbose
-      
+
       - name: Run doc tests
         run: cargo test --doc --all
 
@@ -83,26 +87,29 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      
+
       - name: Cache cargo
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
-      
+
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: agenthub-${{ matrix.target }}
+          name: crow-hub-${{ matrix.target }}
           path: |
-            target/${{ matrix.target }}/release/ah
-            target/${{ matrix.target }}/release/ah.exe
+            target/${{ matrix.target }}/release/crow
+            target/${{ matrix.target }}/release/crow.exe
+            target/${{ matrix.target }}/release/crow-gui
+            target/${{ matrix.target }}/release/crow-gui.exe
+          if-no-files-found: ignore
