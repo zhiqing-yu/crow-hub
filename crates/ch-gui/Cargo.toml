@@ -1,0 +1,29 @@
+[package]
+name = "ch-gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Crow Hub GUI application"
+license.workspace = true
+
+[[bin]]
+name = "crow-gui"
+path = "src/main.rs"
+
+[dependencies]
+ch-protocol = { path = "../ch-protocol" }
+ch-core = { path = "../ch-core" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+
+# Tauri dependencies (to be added later)
+# tauri = { version = "1.5", features = ["shell-open"] }
+
+[dev-dependencies]
+tokio-test = "0.4"

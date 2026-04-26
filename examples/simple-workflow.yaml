@@ -1,0 +1,65 @@
+# Simple Agent Workflow Example
+# Run with: agenthub run simple-workflow.yaml
+
+workflow:
+  name: "Simple Chat Workflow"
+  description: "A simple workflow with two agents collaborating"
+  
+  # Define agents
+  agents:
+    - id: "claude"
+      name: "Claude Assistant"
+      adapter: "claude"
+      role: "coordinator"
+      
+    - id: "kimi"
+      name: "Kimi Assistant"
+      adapter: "kimi"
+      role: "researcher"
+  
+  # Define workflow steps
+  steps:
+    - id: "step-1"
+      name: "Initial Analysis"
+      agent: "claude"
+      action: "analyze"
+      inputs:
+        query: "What are the key features of Rust programming language?"
+      outputs:
+        - "analysis_result"
+    
+    - id: "step-2"
+      name: "Deep Research"
+      agent: "kimi"
+      action: "research"
+      inputs:
+        topic: "{{step-1.analysis_result}}"
+      outputs:
+        - "research_result"
+      depends_on:
+        - "step-1"
+    
+    - id: "step-3"
+      name: "Final Summary"
+      agent: "claude"
+      action: "summarize"
+      inputs:
+        analysis: "{{step-1.analysis_result}}"
+        research: "{{step-2.research_result}}"
+      outputs:
+        - "final_summary"
+      depends_on:
+        - "step-2"
+  
+  # Shared memory configuration
+  memory:
+    enabled: true
+    collections:
+      - "workflow_context"
+      - "agent_outputs"
+  
+  # Execution settings
+  execution:
+    mode: "sequential"  # sequential, parallel, auto
+    max_retries: 3
+    timeout: 300  # seconds per step

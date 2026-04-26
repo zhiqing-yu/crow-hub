@@ -1,0 +1,27 @@
+[package]
+name = "ch-model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Crow Hub model routing and backend management"
+license.workspace = true
+
+[dependencies]
+ch-protocol = { path = "../ch-protocol" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = { workspace = true }

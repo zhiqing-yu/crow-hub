@@ -1,0 +1,33 @@
+[agent]
+name = "openclaw-wsl-ubuntu"
+version = "1.0.0"
+description = "OpenClaw agent"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = true
+
+[subprocess]
+command = "/home/zhiqing/.npm-global/bin/openclaw"
+args = [
+    "agent",
+    "--agent",
+    "main",
+    "--local",
+    "--json",
+    "-m",
+]
+shell = "wsl"
+wsl_distro = "Ubuntu"
+input_mode = "argv"
+output_mode = "json"
+output_filter = "finalAssistantVisibleText"
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]

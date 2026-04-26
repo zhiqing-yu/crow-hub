@@ -1,0 +1,29 @@
+[agent]
+name = "kimi-ssh-1"
+version = "1.0.0"
+description = "Moonshot Kimi CLI"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = false
+
+[subprocess]
+command = "/home/zhiqing/.local/bin/kimi"
+args = [
+    "--quiet",
+    "--prompt",
+]
+shell = "ssh"
+ssh_host = "192.168.50.1"
+ssh_user = "zhiqing"
+input_mode = "argv"
+output_mode = "raw"
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]

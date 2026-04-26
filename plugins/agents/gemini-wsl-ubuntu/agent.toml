@@ -1,0 +1,25 @@
+[agent]
+name = "gemini-wsl-ubuntu"
+version = "1.0.0"
+description = "Google Gemini CLI"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = true
+
+[subprocess]
+command = "/home/linuxbrew/.linuxbrew/bin/gemini"
+args = ["-p"]
+shell = "wsl"
+wsl_distro = "Ubuntu"
+input_mode = "argv"
+output_mode = "raw"
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]

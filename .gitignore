@@ -1,0 +1,42 @@
+/target
+**/*.rs.bk
+Cargo.lock
+*.pdb
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Test artifacts
+test_output/
+coverage/
+
+# Documentation build
+docs/book/
+
+# Temporary files
+tmp/
+temp/

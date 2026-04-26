@@ -1,0 +1,24 @@
+[package]
+name = "ch-monitor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Crow Hub monitoring and metrics"
+license.workspace = true
+
+[dependencies]
+ch-protocol = { path = "../ch-protocol" }
+ch-core = { path = "../ch-core" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"

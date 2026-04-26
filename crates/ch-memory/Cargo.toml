@@ -1,0 +1,25 @@
+[package]
+name = "ch-memory"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Crow Hub shared memory layer"
+license.workspace = true
+
+[dependencies]
+ch-protocol = { path = "../ch-protocol" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = { workspace = true }

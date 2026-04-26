@@ -1,0 +1,28 @@
+[package]
+name = "ch-adapter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Crow Hub adapter system"
+license.workspace = true
+
+[dependencies]
+ch-protocol = { path = "../ch-protocol" }
+ch-core = { path = "../ch-core" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = { workspace = true }
+wiremock = "0.5"

@@ -1,0 +1,28 @@
+[agent]
+name = "kimi-wsl-ubuntu"
+version = "1.0.0"
+description = "Moonshot Kimi CLI"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = false
+
+[subprocess]
+command = "/home/zhiqing/.local/bin/kimi"
+args = [
+    "--quiet",
+    "--prompt",
+]
+shell = "wsl"
+wsl_distro = "Ubuntu"
+input_mode = "argv"
+output_mode = "raw"
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]

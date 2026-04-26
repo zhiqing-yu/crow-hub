@@ -1,0 +1,59 @@
+# Crow Hub Configuration Example
+# Copy this file to ./crow-hub.toml or ~/.config/crow-hub/config.toml
+
+[server]
+bind = "127.0.0.1"
+port = 8080
+ws_port = 8081
+# api_key = "your-secret-api-key"  # Optional: enable API authentication
+cors_origins = ["*"]
+
+[logging]
+level = "info"  # trace, debug, info, warn, error
+format = "pretty"  # pretty, json, compact
+# file = "/var/log/agenthub/agenthub.log"  # Optional: log to file
+console = true
+
+[memory]
+backend = "sqlite"  # sqlite, chroma, qdrant, milvus, pgvector
+connection = "./data/memory.db"
+embedding_model = "local"  # local, openai, sentence-transformers
+max_entries = 10000
+
+[monitoring]
+enabled = true
+export_interval = 60  # seconds
+prometheus = "0.0.0.0:9090"
+tracing = true
+
+# Adapter configurations
+[adapters.claude]
+adapter_type = "claude"
+enabled = true
+api_key = "${CLAUDE_API_KEY}"
+model = "claude-3-5-sonnet-20241022"
+base_url = "https://api.anthropic.com"
+
+[adapters.kimi]
+adapter_type = "kimi"
+enabled = true
+api_key = "${KIMI_API_KEY}"
+base_url = "https://api.moonshot.cn/v1"
+model = "moonshot-v1-128k"
+
+[adapters.gemini]
+adapter_type = "gemini"
+enabled = true
+api_key = "${GEMINI_API_KEY}"
+model = "gemini-1.5-pro"
+
+[adapters.hermes]
+adapter_type = "hermes"
+enabled = true
+endpoint = "http://localhost:8080"
+transport = "grpc"  # grpc, http, websocket
+
+[adapters.codebuddy]
+adapter_type = "codebuddy"
+enabled = true
+endpoint = "http://localhost:3000"

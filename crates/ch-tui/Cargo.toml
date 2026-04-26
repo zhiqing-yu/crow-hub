@@ -1,0 +1,35 @@
+[package]
+name = "ch-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Crow Hub Terminal UI"
+license.workspace = true
+
+[[bin]]
+name = "crow"
+path = "src/main.rs"
+
+[dependencies]
+ch-protocol = { path = "../ch-protocol" }
+ch-core = { path = "../ch-core" }
+ch-adapter = { path = "../ch-adapter" }
+ch-memory = { path = "../ch-memory" }
+ch-monitor = { path = "../ch-monitor" }
+ch-model = { path = "../ch-model" }
+ch-agent = { path = "../ch-agent" }
+
+tokio = { workspace = true }
+clap = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"

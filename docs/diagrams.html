@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crow Hub v2 — Architecture Diagrams</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 32px 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.95rem;
+      margin-bottom: 40px;
+    }
+    .section {
+      margin-bottom: 48px;
+    }
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #93c5fd;
+      border-left: 3px solid #3b82f6;
+      padding-left: 12px;
+      margin-bottom: 20px;
+    }
+    .diagram-card {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      padding: 28px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+    .diagram-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      margin-bottom: 16px;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+    .mermaid svg {
+      max-width: 100%;
+    }
+    .note {
+      font-size: 0.82rem;
+      color: #94a3b8;
+      background: #161825;
+      border-left: 2px solid #475569;
+      padding: 10px 14px;
+      margin-top: 14px;
+      border-radius: 0 6px 6px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Crow Hub v2 — Architecture Diagrams</h1>
+  <p class="subtitle">Universal Agent Orchestration Hub — hot-swappable agents, decoupled model routing, graph vector memory</p>
+
+  <!-- ============================================================ -->
+  <!-- 1. HIGH-LEVEL SYSTEM OVERVIEW -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">1. System Overview</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Four-Layer Architecture</div>
+      <div class="mermaid">
+graph TB
+    subgraph "User Interfaces"
+        TUI["TUI (Ratatui)<br/>Binary: crow"]
+        GUI["GUI (Tauri)<br/>Binary: crow-gui"]
+    end
+
+    subgraph "Core Hub"
+        ORCH["Orchestrator"]
+        COMM["Communication Layer<br/>Channels + DMs + ACLs"]
+        REG["Agent Registry<br/>Plugin Loader"]
+        SES["Session Manager"]
+        CFG["Config (Figment)"]
+    end
+
+    subgraph "Agent Interface Layer"
+        A1["Claude"]
+        A2["Gemini"]
+        A3["Codex"]
+        A4["OpenClaw"]
+        A5["Hermes"]
+        A6["Kimi"]
+        A7["OpenCode"]
+        A8["Copaw"]
+        A9["Custom..."]
+    end
+
+    subgraph "Model Backend Layer"
+        MR["Model Router"]
+        MB1["vLLM"]
+        MB2["Ollama"]
+        MB3["OpenAI API"]
+        MB4["Anthropic API"]
+        MB5["Google API"]
+        MB6["Mock API Server"]
+        AD["Auto-Discovery"]
+    end
+
+    subgraph "Graph Memory Engine"
+        KG["Knowledge Graph<br/>TASK / SKILL / EVENT"]
+        EMB["Embedding + Compression"]
+        PPR["PageRank + Dual-Path Retrieval"]
+        MP["Agent Memory Plugins"]
+        MX["Import / Export / Merge"]
+    end
+
+    subgraph "Monitor"
+        MON["Metrics + Cost Tracking"]
+    end
+
+    TUI --> COMM
+    GUI --> COMM
+    COMM --> REG
+    ORCH --> COMM
+    SES --> COMM
+
+    REG --> A1
+    REG --> A2
+    REG --> A3
+    REG --> A4
+    REG --> A5
+    REG --> A6
+    REG --> A7
+    REG --> A8
+    REG --> A9
+
+    A1 --> MR
+    A2 --> MR
+    A3 --> MR
+    A4 --> MR
+    MR --> MB1
+    MR --> MB2
+    MR --> MB3
+    MR --> MB4
+    MR --> MB5
+    MR --> MB6
+    AD --> MR
+
+    A4 -.->|native local| MB1
+    A5 -.->|native local| MB2
+
+    MP --> A1
+    MP --> A2
+    MP --> A3
+    KG --> EMB
+    EMB --> PPR
+
+    MON --> COMM
+      </div>
+      <div class="note">Agents connect to models via the Model Router OR directly when they have native local LLM support (dashed lines). Memory plugins translate each agent's context into the shared graph format.</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 2. CRATE & PLUGIN STRUCTURE -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">2. Workspace Structure</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Crate Dependency Graph</div>
+      <div class="mermaid">
+graph LR
+    PROTO["ch-protocol<br/>Messages, Memory Format,<br/>Plugin Manifests"]
+    CORE["ch-core<br/>Hub Runtime,<br/>Comms, ACLs"]
+    MODEL["ch-model<br/>Model Router,<br/>Auto-Discovery"]
+    AGENT["ch-agent<br/>Interface Trait,<br/>Plugin Loader"]
+    MEMORY["ch-memory<br/>Graph Memory Engine"]
+    MONITOR["ch-monitor<br/>Metrics + Cost"]
+    TUI["ch-tui<br/>Binary: crow"]
+    GUI["ch-gui<br/>Binary: crow-gui"]
+
+    CORE --> PROTO
+    MODEL --> PROTO
+    AGENT --> PROTO
+    AGENT --> CORE
+    AGENT --> MODEL
+    MEMORY --> PROTO
+    MEMORY --> CORE
+    MONITOR --> PROTO
+    MONITOR --> CORE
+    TUI --> CORE
+    TUI --> AGENT
+    TUI --> MEMORY
+    TUI --> MONITOR
+    GUI --> CORE
+    GUI --> AGENT
+
+    style PROTO fill:#e1f5fe,color:#000
+    style CORE fill:#c8e6c9,color:#000
+    style MODEL fill:#fff9c4,color:#000
+    style AGENT fill:#fff3e0,color:#000
+    style MEMORY fill:#e8d5f5,color:#000
+    style MONITOR fill:#fce4ec,color:#000
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Plugin Directory Layout</div>
+      <div class="mermaid">
+graph TD
+    ROOT["crow-hub/"] --> CRATES["crates/"]
+    ROOT --> PLUGINS["plugins/"]
+
+    CRATES --> C1["ch-protocol"]
+    CRATES --> C2["ch-core"]
+    CRATES --> C3["ch-model"]
+    CRATES --> C4["ch-agent"]
+    CRATES --> C5["ch-memory"]
+    CRATES --> C6["ch-monitor"]
+    CRATES --> C7["ch-tui"]
+    CRATES --> C8["ch-gui"]
+
+    PLUGINS --> PA["agents/"]
+    PLUGINS --> PM["memory/"]
+
+    PA --> PA1["claude/"]
+    PA --> PA2["gemini/"]
+    PA --> PA3["codex/"]
+    PA --> PA4["openclaw/"]
+    PA --> PA5["hermes/"]
+    PA --> PA6["kimi/"]
+    PA --> PA7["opencode/"]
+    PA --> PA8["copaw/"]
+
+    PM --> PM1["claude-mem/"]
+    PM --> PM2["gemini-mem/"]
+    PM --> PM3["generic-mem/"]
+
+    style PLUGINS fill:#fff3e0,color:#000
+    style PA fill:#fff9c4,color:#000
+    style PM fill:#e8d5f5,color:#000
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 3. MODEL BACKEND LAYER -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">3. Model Backend Layer (ch-model)</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Model Routing Architecture</div>
+      <div class="mermaid">
+flowchart TB
+    subgraph "Agent Interfaces"
+        AI1["Claude"]
+        AI2["Gemini"]
+        AI3["Codex"]
+        AI4["OpenClaw"]
+        AI5["Custom Agent"]
+    end
+
+    subgraph "Model Router"
+        MR["ModelRouter<br/>Route by policy + load"]
+        REG["ModelRegistry<br/>Available backends"]
+        MOCK["Mock API Server<br/>Expose any backend<br/>as OpenAI-compatible"]
+    end
+
+    subgraph "Remote Backends"
+        R1["OpenAI API"]
+        R2["Anthropic API"]
+        R3["Google AI API"]
+        R4["Kimi API"]
+        R5["Custom Endpoint"]
+    end
+
+    subgraph "Local Backends"
+        L1["vLLM<br/>:8000"]
+        L2["Ollama<br/>:11434"]
+        L3["LM Studio<br/>:1234"]
+        L4["llama.cpp<br/>:8080"]
+    end
+
+    subgraph "Auto-Discovery"
+        AD["Port Scanner<br/>Detect local servers"]
+        HC["Health Check<br/>Verify + list models"]
+    end
+
+    AI1 --> MR
+    AI2 --> MR
+    AI3 --> MR
+    AI4 -->|native local| L1
+    AI5 --> MOCK
+
+    MR --> REG
+    REG --> R1
+    REG --> R2
+    REG --> R3
+    REG --> R4
+    REG --> R5
+    REG --> L1
+    REG --> L2
+    REG --> L3
+    REG --> L4
+
+    MOCK --> REG
+
+    AD --> HC
+    HC --> REG
+
+    style MR fill:#4fc3f7,color:#000
+    style MOCK fill:#fff176,color:#000
+    style AD fill:#a5d6a7,color:#000
+      </div>
+      <div class="note">The Mock API Server lets agents that only speak OpenAI protocol use ANY backend (vLLM, Ollama, Anthropic). Auto-discovery scans common ports and registers found model servers automatically.</div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Model Router - Request Flow</div>
+      <div class="mermaid">
+sequenceDiagram
+    participant Agent as Agent Interface
+    participant Router as ModelRouter
+    participant Registry as ModelRegistry
+    participant Backend as Model Backend
+
+    Agent->>Router: chat_completion(messages, policy)
+    Router->>Registry: resolve_backend(policy)
+    Registry-->>Router: backend_endpoint + auth
+
+    alt Native Protocol
+        Router->>Backend: POST /v1/chat/completions
+        Backend-->>Router: response stream
+    else Via Mock API
+        Router->>Backend: translate + POST native API
+        Backend-->>Router: response
+        Router-->>Router: normalize to OpenAI format
+    end
+
+    Router-->>Agent: unified Response
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Auto-Discovery Sequence</div>
+      <div class="mermaid">
+sequenceDiagram
+    participant AD as AutoDiscovery
+    participant Ports as Port Scanner
+    participant HC as HealthChecker
+    participant Reg as ModelRegistry
+
+    AD->>Ports: scan known ports (8000, 11434, 1234, 8080)
+    Ports-->>AD: found 2 servers
+
+    AD->>HC: GET :11434/api/tags
+    HC-->>AD: Ollama - llama3, codellama, mistral
+
+    AD->>HC: GET :8000/v1/models
+    HC-->>AD: vLLM - deepseek-coder-33b
+
+    AD->>Reg: register(ollama, 3 models)
+    AD->>Reg: register(vllm, 1 model)
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 4. AGENT INTERFACE LAYER -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">4. Agent Interface Layer (ch-agent)</div>
+    <div class="diagram-card">
+      <div class="diagram-label">AgentInterface Trait</div>
+      <div class="mermaid">
+classDiagram
+    class AgentInterface {
+        <<interface>>
+        +init(manifest) Result
+        +start() Result
+        +stop() Result
+        +health_check() HealthStatus
+        +send_message(msg) Result
+        +receive_message() Message
+        +join_channel(name) Result
+        +leave_channel(name) Result
+        +connect_model(backend) Result
+        +list_models() string
+        +switch_model(model_id) Result
+        +attach_memory(plugin) Result
+        +sync_memory() Result
+        +capabilities() string
+    }
+
+    class ClaudeAgent {
+        +String api_key
+        +String model
+        +bool supports_tools
+        +bool supports_streaming
+    }
+
+    class GeminiAgent {
+        +String api_key
+        +String model
+    }
+
+    class CodexAgent {
+        +String api_key
+    }
+
+    class OpenClawAgent {
+        +String endpoint
+        +bool has_native_local
+    }
+
+    class HermesAgent {
+        +String endpoint
+        +bool has_native_local
+    }
+
+    class KimiAgent {
+        +String api_key
+        +String model
+    }
+
+    class OpenCodeAgent {
+        +String cli_path
+    }
+
+    class CopawAgent {
+        +String endpoint
+    }
+
+    class CustomAgent {
+        +String manifest_path
+    }
+
+    AgentInterface <|-- ClaudeAgent
+    AgentInterface <|-- GeminiAgent
+    AgentInterface <|-- CodexAgent
+    AgentInterface <|-- OpenClawAgent
+    AgentInterface <|-- HermesAgent
+    AgentInterface <|-- KimiAgent
+    AgentInterface <|-- OpenCodeAgent
+    AgentInterface <|-- CopawAgent
+    AgentInterface <|-- CustomAgent
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Plugin Hot-Swap Lifecycle</div>
+      <div class="mermaid">
+stateDiagram-v2
+    [*] --> Discovered: scan plugins/agents/
+    Discovered --> Loading: load manifest
+    Loading --> Ready: init()
+    Ready --> Running: start()
+    Running --> Paused: pause()
+    Paused --> Running: resume()
+    Running --> Stopping: stop()
+    Stopping --> Ready: can restart
+    Running --> HotSwap: swap model / config
+    HotSwap --> Running: reconnect
+
+    Running --> Unloading: unload plugin
+    Unloading --> [*]
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Agent Plugin Manifest (TOML)</div>
+      <div class="mermaid">
+graph LR
+    MANIFEST["agent.toml"] --> NAME["name = 'claude'"]
+    MANIFEST --> VERSION["version = '1.0'"]
+    MANIFEST --> CAPS["capabilities =<br/>tools, streaming,<br/>file_access, vision"]
+    MANIFEST --> PROTO["protocol = 'openai-compat'<br/>OR 'anthropic'<br/>OR 'native-local'"]
+    MANIFEST --> MEMORY["memory_plugin = 'claude-mem'"]
+    MANIFEST --> MODELS["default_models =<br/>claude-sonnet-4-6,<br/>claude-opus-4-6"]
+
+    style MANIFEST fill:#4fc3f7,color:#000
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 5. COMMUNICATION LAYER -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">5. Communication Layer</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Channel Types and ACLs</div>
+      <div class="mermaid">
+flowchart TB
+    subgraph "Communication Router"
+        CR["Message Router + ACL Engine"]
+    end
+
+    subgraph "Group Channels"
+        CH1["#code-review<br/>Claude + Gemini + Codex"]
+        CH2["#debugging<br/>Claude + Hermes"]
+        CH3["#research<br/>All agents"]
+    end
+
+    subgraph "Direct Messages"
+        DM1["Claude <---> Gemini"]
+        DM2["Codex <---> OpenClaw"]
+    end
+
+    subgraph "Monitoring Levels"
+        ML["Per-Agent Visibility"]
+        LV1["FULL - see all messages"]
+        LV2["SUMMARY - digests only"]
+        LV3["NOTIFY - topic + status"]
+        LV4["NONE - no visibility"]
+    end
+
+    CR --> CH1
+    CR --> CH2
+    CR --> CH3
+    CR --> DM1
+    CR --> DM2
+    CR --> ML
+    ML --> LV1
+    ML --> LV2
+    ML --> LV3
+    ML --> LV4
+
+    style CR fill:#4fc3f7,color:#000
+    style ML fill:#fff176,color:#000
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Group Chat Communication Flow</div>
+      <div class="mermaid">
+sequenceDiagram
+    participant User
+    participant Hub as CrowHub
+    participant Claude
+    participant Gemini
+    participant Codex
+    participant Monitor as Monitor Agent
+
+    User->>Hub: create_channel(#code-review)
+    Hub->>Claude: join(#code-review, FULL)
+    Hub->>Gemini: join(#code-review, FULL)
+    Hub->>Codex: join(#code-review, FULL)
+    Hub->>Monitor: join(#code-review, SUMMARY)
+
+    User->>Hub: send(#code-review, "review auth module")
+    Hub->>Claude: deliver(message)
+    Hub->>Gemini: deliver(message)
+    Hub->>Codex: deliver(message)
+    Hub-->>Monitor: deliver(summary digest)
+
+    Claude->>Hub: reply("Found 3 issues...")
+    Hub->>Gemini: deliver(Claude's reply)
+    Hub->>Codex: deliver(Claude's reply)
+    Hub-->>Monitor: deliver(summary)
+
+    Gemini->>Hub: reply("Agree, also see...")
+    Hub->>Claude: deliver(Gemini's reply)
+    Hub->>Codex: deliver(Gemini's reply)
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">ACL Configuration Matrix</div>
+      <div class="mermaid">
+graph LR
+    subgraph "Agent A (Lead)"
+        A["Claude<br/>LEAD ROLE"]
+    end
+
+    subgraph "Agent B (Worker)"
+        B["Gemini"]
+    end
+
+    subgraph "Agent C (Worker)"
+        C["Codex"]
+    end
+
+    subgraph "Agent D (Observer)"
+        D["Monitor"]
+    end
+
+    A -->|"FULL visibility<br/>of B and C"| B
+    A -->|"FULL visibility<br/>of B and C"| C
+    B -->|"SUMMARY visibility<br/>of C"| C
+    C -->|"SUMMARY visibility<br/>of B"| B
+    D -->|"NOTIFY only<br/>all agents"| A
+    D -->|"NOTIFY only"| B
+    D -->|"NOTIFY only"| C
+
+    style A fill:#4fc3f7,color:#000
+    style D fill:#fff176,color:#000
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 6. GRAPH MEMORY ENGINE -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">6. Graph Memory Engine (ch-memory)</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Knowledge Graph Structure</div>
+      <div class="mermaid">
+graph TB
+    subgraph "Node Types"
+        T["TASK<br/>Completed actions"]
+        S["SKILL<br/>Procedural know-how"]
+        E["EVENT<br/>Failures + incidents"]
+    end
+
+    subgraph "Edge Types"
+        direction LR
+        E1["USED_SKILL"]
+        E2["SOLVED_BY"]
+        E3["REQUIRES"]
+        E4["PATCHES"]
+        E5["CONFLICTS_WITH"]
+    end
+
+    T -->|USED_SKILL| S
+    T -->|SOLVED_BY| S
+    S -->|REQUIRES| S
+    E -->|PATCHES| S
+    E -->|CONFLICTS_WITH| T
+
+    style T fill:#81c784,color:#000
+    style S fill:#64b5f6,color:#000
+    style E fill:#e57373,color:#000
+      </div>
+      <div class="note">Raw conversations are compressed into structured graph triples (TASK/SKILL/EVENT + edges), achieving ~75% token reduction. Duplicate nodes with cosine similarity >= 0.90 are merged.</div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Storage Schema (SQLite + FTS5)</div>
+      <div class="mermaid">
+graph LR
+    subgraph "SQLite Tables"
+        N["gm_nodes<br/>entities + PageRank<br/>+ community_id"]
+        ED["gm_edges<br/>typed relationships"]
+        FTS["gm_nodes_fts<br/>FTS5 full-text index"]
+        M["gm_messages<br/>raw transcripts"]
+        V["gm_vectors<br/>embedding vectors"]
+        C["gm_communities<br/>summaries + embeddings"]
+    end
+
+    N --> ED
+    N --> FTS
+    N --> V
+    N --> C
+    M --> N
+
+    style N fill:#4fc3f7,color:#000
+    style FTS fill:#fff176,color:#000
+    style V fill:#e8d5f5,color:#000
+    style C fill:#a5d6a7,color:#000
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Dual-Path Retrieval</div>
+      <div class="mermaid">
+flowchart LR
+    Q["Query"] --> PRECISE
+    Q --> GENERAL
+
+    subgraph "Precise Path"
+        PRECISE["Vector/FTS5 Search"] --> SEED["Seed Nodes"]
+        SEED --> COMM_P["Community Peer<br/>Expansion"]
+        COMM_P --> GRAPH_P["Graph Traversal"]
+    end
+
+    subgraph "Generalized Path"
+        GENERAL["Query Embedding vs<br/>Community Summaries"] --> MATCH["Matched Community<br/>Members"]
+        MATCH --> GRAPH_G["Graph Walk"]
+    end
+
+    GRAPH_P --> PPR["Personalized<br/>PageRank"]
+    GRAPH_G --> PPR
+    PPR --> DEDUP["Deduplicate +<br/>Rank Results"]
+    DEDUP --> CTX["Inject into<br/>Agent Context"]
+
+    style Q fill:#4fc3f7,color:#000
+    style PPR fill:#fff176,color:#000
+    style CTX fill:#a5d6a7,color:#000
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Memory Pipeline (Per Turn)</div>
+      <div class="mermaid">
+sequenceDiagram
+    participant Agent
+    participant Plugin as Memory Plugin
+    participant Engine as Graph Engine
+    participant LLM as Embedding LLM
+
+    Note over Agent,LLM: INGEST (zero LLM cost)
+    Agent->>Plugin: raw conversation turn
+    Plugin->>Engine: save to gm_messages
+
+    Note over Agent,LLM: ASSEMBLE (for context)
+    Engine->>Engine: PPR ranking
+    Engine->>Engine: top nodes + episodic traces
+    Engine-->>Plugin: memory context XML
+    Plugin-->>Agent: inject into prompt
+
+    Note over Agent,LLM: AFTER TURN (async)
+    Engine->>LLM: extract triples from turn
+    LLM-->>Engine: TASK/SKILL/EVENT nodes + edges
+    Engine->>Engine: vector dedup (cosine >= 0.90)
+
+    Note over Agent,LLM: EVERY N TURNS (compact)
+    Engine->>Engine: recompute PageRank
+    Engine->>Engine: community detection
+    Engine->>LLM: generate community summaries
+    LLM-->>Engine: summary embeddings
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Embedding Provider Support</div>
+      <div class="mermaid">
+flowchart LR
+    ENG["Graph Engine"] --> EP["EmbeddingProvider<br/>Any OpenAI-compatible"]
+    EP --> E1["OpenAI<br/>text-embedding-3-small"]
+    EP --> E2["Ollama<br/>nomic-embed-text"]
+    EP --> E3["vLLM<br/>custom model"]
+    EP --> E4["llama.cpp<br/>local embeddings"]
+    EP --> E5["DashScope / MiniMax<br/>other providers"]
+
+    style EP fill:#4fc3f7,color:#000
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 7. AGENT MEMORY PLUGINS -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">7. Memory Plugins and Sharing</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Per-Agent Memory Plugins</div>
+      <div class="mermaid">
+flowchart TB
+    subgraph "Shared Graph Memory"
+        KG["Knowledge Graph<br/>Standard Format:<br/>TASK / SKILL / EVENT"]
+    end
+
+    subgraph "Memory Plugins"
+        P1["claude-mem<br/>Translate Claude context<br/>to/from graph triples"]
+        P2["gemini-mem<br/>Translate Gemini context"]
+        P3["codex-mem<br/>Translate Codex context"]
+        P4["generic-mem<br/>OpenAI-compat fallback"]
+    end
+
+    subgraph "Agent Runtimes"
+        A1["Claude"]
+        A2["Gemini"]
+        A3["Codex"]
+        A4["Any Agent"]
+    end
+
+    A1 <-->|agent-specific format| P1
+    A2 <-->|agent-specific format| P2
+    A3 <-->|agent-specific format| P3
+    A4 <-->|agent-specific format| P4
+
+    P1 <-->|standard triples| KG
+    P2 <-->|standard triples| KG
+    P3 <-->|standard triples| KG
+    P4 <-->|standard triples| KG
+
+    style KG fill:#e8d5f5,color:#000
+      </div>
+      <div class="note">Each agent speaks differently. Memory plugins translate between agent-specific conversation format and the shared graph triple format. This means Claude's insights are queryable by Gemini and vice versa.</div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Cross-Workspace Memory Sharing</div>
+      <div class="mermaid">
+flowchart LR
+    subgraph "Workspace A"
+        WA["Graph Memory A<br/>SQLite + Embeddings"]
+    end
+
+    subgraph "Portable Bundle"
+        EXP["Export<br/>.crow-memory"]
+        FMT["Standard Format<br/>nodes + edges +<br/>vectors + communities"]
+    end
+
+    subgraph "Workspace B"
+        WB["Graph Memory B"]
+    end
+
+    subgraph "Merge Engine"
+        MERGE["Merge<br/>cosine dedup<br/>re-community<br/>re-PageRank"]
+    end
+
+    WA -->|export| EXP
+    EXP --> FMT
+    FMT -->|import| MERGE
+    WB --> MERGE
+    MERGE -->|merged graph| WB
+
+    style FMT fill:#fff176,color:#000
+    style MERGE fill:#4fc3f7,color:#000
+      </div>
+      <div class="note">Users can export their memory graph as a portable .crow-memory bundle (SQLite + embeddings), then import and merge it into another workspace. Cosine dedup prevents duplicate knowledge, and PageRank + communities are recomputed after merge.</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 8. MONITOR SYSTEM -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">8. Monitor System (ch-monitor)</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Metrics Collection Pipeline</div>
+      <div class="mermaid">
+flowchart LR
+    subgraph "Sources"
+        AGENTS["Agent Interfaces"]
+        MODELS["Model Backends"]
+        COMMS["Communication Layer"]
+    end
+
+    subgraph "Monitor Core"
+        MON["Monitor<br/>DashMap per-agent"]
+        HIST["Ring Buffer<br/>Historical"]
+    end
+
+    subgraph "Exporters"
+        SNAP["MetricsSnapshot"]
+        PROM["Prometheus<br/>:9090/metrics"]
+        CONS["Console"]
+        TUI_E["TUI Dashboard"]
+    end
+
+    AGENTS -->|tokens + latency| MON
+    MODELS -->|throughput + cost| MON
+    COMMS -->|msg volume| MON
+
+    MON --> HIST
+    MON --> SNAP
+    HIST --> SNAP
+
+    SNAP --> PROM
+    SNAP --> CONS
+    SNAP --> TUI_E
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Per-Agent Cost Tracking</div>
+      <div class="mermaid">
+classDiagram
+    class AgentCostTracker {
+        +agent_id string
+        +model_backend string
+        +tokens string
+        +cost_usd number
+        +cost_per_1k_input number
+        +cost_per_1k_output number
+        +record_usage(input, output)
+        +total_cost() number
+        +cost_by_model() string
+    }
+
+    class SystemCostView {
+        +total_cost_usd number
+        +agents string
+        +cost_by_backend() string
+        +cost_by_agent() string
+        +daily_trend() string
+    }
+
+    SystemCostView --> AgentCostTracker
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 9. SESSION + ORCHESTRATION -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">9. Session and Orchestration</div>
+    <div class="diagram-card">
+      <div class="diagram-label">Orchestration Modes</div>
+      <div class="mermaid">
+flowchart TB
+    ORCH["Orchestrator"] --> SEQ["Sequential<br/>Agent A then B then C"]
+    ORCH --> PAR["Parallel<br/>A + B + C simultaneously"]
+    ORCH --> PIPE["Pipeline<br/>A output feeds B input"]
+    ORCH --> DEBATE["Debate<br/>A vs B, C judges"]
+    ORCH --> SWARM["Swarm<br/>Dynamic delegation<br/>based on capabilities"]
+
+    style ORCH fill:#4fc3f7,color:#000
+    style SWARM fill:#fff176,color:#000
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="diagram-label">Session State Machine</div>
+      <div class="mermaid">
+stateDiagram-v2
+    [*] --> Created: create(config)
+    Created --> Active: start()
+    Active --> Paused: pause()
+    Paused --> Active: resume()
+    Active --> Completed: max_rounds reached
+    Active --> Failed: error
+    Failed --> [*]
+    Completed --> [*]
+
+    state Active {
+        [*] --> Round1: round 1
+        Round1 --> Round2: next_round()
+        Round2 --> Round3: next_round()
+        Round3 --> [*]: done
+    }
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 10. DEVELOPMENT ROADMAP -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-title">10. Development Roadmap (28 Weeks)</div>
+    <div class="diagram-card" style="overflow-x: auto;">
+      <div class="diagram-label">Gantt Chart</div>
+      <div class="mermaid" id="gantt-diagram">
+gantt
+    title Crow Hub v2 Development Roadmap
+    dateFormat  YYYY-MM-DD
+    axisFormat  %Y-%m
+
+    section Foundation
+    Phase 0 - Init + ch-model scaffold  :p0, 2026-04-13, 14d
+    Phase 1 - Core + Comms + ACLs       :p1, after p0, 21d
+
+    section Agents
+    Phase 2 - Plugin System + 3 agents  :p2, after p1, 28d
+
+    section Memory
+    Phase 3 - Graph Memory Engine       :p3, after p2, 28d
+    Phase 6 - Memory Plugins + Sharing  :p6, after p5, 14d
+
+    section Model Routing
+    Phase 3b - Model Router + Discovery :p3b, after p2, 21d
+
+    section Observability
+    Phase 4 - Monitor + Cost Tracking   :p4, after p3, 14d
+
+    section Interfaces
+    Phase 5 - TUI + Dashboards          :p5, after p4, 21d
+    Phase 7 - GUI (Tauri)               :p7, after p6, 35d
+
+    section Release
+    Phase 8 - Testing + More Agents     :p8, after p7, 14d
+      </div>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        background: '#1e2130',
+        primaryColor: '#3b82f6',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#4b5563',
+        lineColor: '#60a5fa',
+        secondaryColor: '#1e2130',
+        tertiaryColor: '#2d3148',
+        edgeLabelBackground: '#1e2130',
+        clusterBkg: '#2d3148',
+        clusterBorder: '#4b5563',
+        titleColor: '#f8fafc',
+        nodeBorder: '#4b5563',
+        nodeTextColor: '#e2e8f0',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: '14px'
+      },
+      flowchart: { curve: 'basis', htmlLabels: true },
+      sequence: { actorMargin: 50, messageMargin: 40 },
+      gantt: { axisFormat: '%Y-%m', barHeight: 24, fontSize: 13, useWidth: 1050 }
+    });
+
+    // Fix Gantt SVG width after Mermaid renders
+    document.addEventListener('DOMContentLoaded', () => {
+      const observer = new MutationObserver(() => {
+        const ganttSvg = document.querySelector('#gantt-diagram svg');
+        if (ganttSvg) {
+          ganttSvg.style.maxWidth = 'none';
+          ganttSvg.style.width = '100%';
+          observer.disconnect();
+        }
+      });
+      const ganttEl = document.getElementById('gantt-diagram');
+      if (ganttEl) observer.observe(ganttEl, { childList: true, subtree: true });
+    });
+  </script>
+</body>
+</html>
