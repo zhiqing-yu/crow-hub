@@ -6,7 +6,7 @@
 use crate::drivers::{AgentDriver, APIDriver, SubprocessDriver, TmuxDriver};
 use crate::loader::{LoadedPlugin, PluginLoader};
 use crate::manifest::DriverType;
-use crate::{AgentError, AgentInfo, AgentState, Result};
+use crate::{AgentActivity, AgentError, AgentInfo, AgentState, Result};
 use ch_core::{ChannelVisibility, MessageBus};
 use ch_model::{ChatRequest, ChatStreamChunk, ModelRouter};
 use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload};
@@ -23,6 +23,10 @@ pub struct AgentRuntime {
     agents: DashMap<String, AgentEntry>,
     /// Agent name → AgentId mapping for bus addressing
     agent_ids: DashMap<String, AgentId>,
+    /// Live per-agent activity (idle / thinking / errored).
+    /// Wrapped in Arc so the per-agent message-handler tasks can update it
+    /// without holding a reference to `self`.
+    activities: Arc<DashMap<String, AgentActivity>>,
     /// Model router (shared)
     router: Arc<ModelRouter>,
     /// Message bus (shared)
@@ -53,6 +57,7 @@ impl AgentRuntime {
         Self {
             agents: DashMap::new(),
             agent_ids: DashMap::new(),
+            activities: Arc::new(DashMap::new()),
             router,
             bus,
             plugins_dir: plugins_dir.into(),
@@ -155,6 +160,7 @@ impl AgentRuntime {
             info,
             plugin,
         });
+        self.activities.insert(name.clone(), AgentActivity::Unknown);
 
         // Spawn per-agent message handler: listens on bus, processes
         // addressed messages through the driver, publishes responses back.
@@ -162,6 +168,7 @@ impl AgentRuntime {
         let agent_name = name.clone();
         let default_model_for_task = default_model.unwrap_or_else(|| "default".to_string());
         let handler_channels = channels;
+        let activities = self.activities.clone();
 
         tokio::spawn(async move {
             use futures::stream::StreamExt;
@@ -197,6 +204,16 @@ impl AgentRuntime {
                     .map(|c| c.as_str())
                     .unwrap_or("general");
 
+                // Mark this agent as Thinking and start the latency timer.
+                // The latency we track is "time-to-first-chunk", not total
+                // response time, since for chunked streams the user gets
+                // visible feedback at the first chunk.
+                let send_started = std::time::Instant::now();
+                activities.insert(
+                    agent_name.clone(),
+                    AgentActivity::Thinking { since: Utc::now() },
+                );
+
                 // Stream the response through the bus so the TUI gets
                 // incremental feedback.  Each non-empty chunk is published
                 // as its own AgentMessage with the same correlation_id —
@@ -208,11 +225,17 @@ impl AgentRuntime {
                 {
                     Ok(mut stream) => {
                         let mut any_chunk_sent = false;
+                        let mut first_chunk_latency_ms: Option<u64> = None;
+                        let mut errored = false;
                         while let Some(chunk_res) = stream.next().await {
                             match chunk_res {
                                 Ok(chunk) => {
                                     if chunk.content.is_empty() {
                                         continue;
+                                    }
+                                    if first_chunk_latency_ms.is_none() {
+                                        first_chunk_latency_ms =
+                                            Some(send_started.elapsed().as_millis() as u64);
                                     }
                                     any_chunk_sent = true;
                                     let chunk_msg = AgentMessage::new(
@@ -235,17 +258,23 @@ impl AgentRuntime {
                                 }
                                 Err(e) => {
                                     warn!("[{}] Stream chunk error: {}", agent_name, e);
+                                    let err_str = e.to_string();
                                     let err_msg = AgentMessage::new(
                                         from_addr.clone(),
                                         None,
                                         MessageType::TaskResponse,
-                                        Payload::Text(format!("Error: {}", e)),
+                                        Payload::Text(format!("Error: {}", err_str)),
                                     )
                                     .with_correlation(correlation_id);
                                     let _ = bus
                                         .send_to_channel(channel, &agent_id, err_msg)
                                         .await;
+                                    activities.insert(
+                                        agent_name.clone(),
+                                        AgentActivity::Errored { last_error: err_str },
+                                    );
                                     any_chunk_sent = true;
+                                    errored = true;
                                     break;
                                 }
                             }
@@ -266,18 +295,36 @@ impl AgentRuntime {
                             let _ = bus
                                 .send_to_channel(channel, &agent_id, empty_msg)
                                 .await;
+                            activities.insert(
+                                agent_name.clone(),
+                                AgentActivity::Errored {
+                                    last_error: "stream produced no chunks".to_string(),
+                                },
+                            );
+                        } else if !errored {
+                            activities.insert(
+                                agent_name.clone(),
+                                AgentActivity::Idle {
+                                    last_latency_ms: first_chunk_latency_ms,
+                                },
+                            );
                         }
                     }
                     Err(e) => {
                         warn!("[{}] stream_chat failed to start: {}", agent_name, e);
+                        let err_str = e.to_string();
                         let err_msg = AgentMessage::new(
                             from_addr.clone(),
                             None,
                             MessageType::TaskResponse,
-                            Payload::Text(format!("Error: {}", e)),
+                            Payload::Text(format!("Error: {}", err_str)),
                         )
                         .with_correlation(correlation_id);
                         let _ = bus.send_to_channel(channel, &agent_id, err_msg).await;
+                        activities.insert(
+                            agent_name.clone(),
+                            AgentActivity::Errored { last_error: err_str },
+                        );
                     }
                 }
             }
@@ -319,6 +366,16 @@ impl AgentRuntime {
     /// Get info about a specific agent
     pub fn get_agent_info(&self, name: &str) -> Option<AgentInfo> {
         self.agents.get(name).map(|e| e.value().info.clone())
+    }
+
+    /// Get the live per-request activity status for an agent.
+    /// Returns `AgentActivity::Unknown` for agents that haven't been
+    /// loaded or that have never received a request.
+    pub fn activity_of(&self, name: &str) -> AgentActivity {
+        self.activities
+            .get(name)
+            .map(|v| v.clone())
+            .unwrap_or_default()
     }
 
     /// Get the AgentId for a loaded agent (for bus addressing)

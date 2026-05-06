@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use ch_agent::{AgentRuntime, AgentInfo};
+use ch_agent::{AgentActivity, AgentRuntime, AgentInfo};
 use ch_core::MessageBus;
 use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload};
 use crossterm::{
@@ -311,19 +311,38 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .constraints([Constraint::Min(3), Constraint::Length(7)].as_ref())
         .split(chunks[1]);
 
-    // 1. Agent List
+    // 1. Agent List — each row shows a colored status glyph, the agent
+    // name, and (if applicable) the last latency or live elapsed counter
+    // for in-flight requests.  We query `runtime.activity_of` on every
+    // tick so Thinking-state elapsed counters animate live.
     let items: Vec<ListItem> = app
         .agents
         .iter()
         .enumerate()
         .map(|(i, a)| {
-            let prefix = if i == app.selected_agent { "> " } else { "  " };
-            let content = format!("{}{}", prefix, a.name);
-            let mut style = Style::default();
-            if i == app.selected_agent {
-                style = style.add_modifier(Modifier::BOLD).fg(Color::Cyan);
+            let activity = app.runtime.activity_of(&a.name);
+            let (glyph, glyph_color, suffix) = render_activity(&activity);
+
+            let selected = i == app.selected_agent;
+            let cursor = if selected { "> " } else { "  " };
+            let mut name_style = Style::default();
+            if selected {
+                name_style = name_style.add_modifier(Modifier::BOLD).fg(Color::Cyan);
             }
-            ListItem::new(Line::from(Span::styled(content, style)))
+
+            let mut spans = vec![
+                Span::raw(cursor),
+                Span::styled(glyph, Style::default().fg(glyph_color)),
+                Span::raw(" "),
+                Span::styled(a.name.clone(), name_style),
+            ];
+            if !suffix.is_empty() {
+                spans.push(Span::styled(
+                    format!("  {}", suffix),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -380,6 +399,53 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     f.render_widget(input_par, right_chunks[1]);
 }
 
+/// Map an `AgentActivity` to (glyph, color, suffix) for the agent list.
+///
+/// Glyph choice:
+///   ●  filled circle — definite status (idle/thinking/errored, all
+///      colored differently).  Falls back consistently across most
+///      monospace terminal fonts.
+///   ○  hollow circle — Unknown (never spoken).
+///
+/// Suffix:
+///   Idle      → last-latency ("780ms" or "2.1s")
+///   Thinking  → live elapsed since the request was sent ("12s…")
+///   Errored   → "err" (red).  Truncating the actual error keeps the
+///               agent list narrow; the full error appears in the chat.
+///   Unknown   → empty (clean default for not-yet-spoken agents).
+fn render_activity(activity: &AgentActivity) -> (&'static str, Color, String) {
+    match activity {
+        AgentActivity::Unknown => ("○", Color::DarkGray, String::new()),
+        AgentActivity::Idle { last_latency_ms } => {
+            let suffix = match last_latency_ms {
+                Some(ms) => format_latency(*ms),
+                None => String::new(),
+            };
+            ("●", Color::Green, suffix)
+        }
+        AgentActivity::Thinking { since } => {
+            let elapsed_secs = (chrono::Utc::now() - *since).num_seconds().max(0);
+            let suffix = format!("{}s…", elapsed_secs);
+            ("●", Color::Yellow, suffix)
+        }
+        AgentActivity::Errored { .. } => ("✗", Color::Red, "err".to_string()),
+    }
+}
+
+/// Render a millisecond latency in a compact form: `780ms` for sub-second,
+/// `2.1s` for seconds, `4m12s` for minutes (rare but possible for slow
+/// CLIs like cold-started Gemini).
+fn format_latency(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{}ms", ms)
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        let total_s = ms / 1000;
+        format!("{}m{}s", total_s / 60, total_s % 60)
+    }
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
@@ -397,4 +463,54 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
         }
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_latency_sub_second() {
+        assert_eq!(format_latency(0), "0ms");
+        assert_eq!(format_latency(780), "780ms");
+        assert_eq!(format_latency(999), "999ms");
+    }
+
+    #[test]
+    fn format_latency_seconds() {
+        assert_eq!(format_latency(1_000), "1.0s");
+        assert_eq!(format_latency(2_100), "2.1s");
+        assert_eq!(format_latency(59_999), "60.0s");
+    }
+
+    #[test]
+    fn format_latency_minutes() {
+        assert_eq!(format_latency(60_000), "1m0s");
+        assert_eq!(format_latency(252_000), "4m12s"); // 4m12s ≈ Gemini cold start
+    }
+
+    #[test]
+    fn render_activity_unknown_has_empty_suffix() {
+        let (glyph, _, suffix) = render_activity(&AgentActivity::Unknown);
+        assert_eq!(glyph, "○");
+        assert_eq!(suffix, "");
+    }
+
+    #[test]
+    fn render_activity_idle_with_latency() {
+        let (glyph, _, suffix) = render_activity(&AgentActivity::Idle {
+            last_latency_ms: Some(780),
+        });
+        assert_eq!(glyph, "●");
+        assert_eq!(suffix, "780ms");
+    }
+
+    #[test]
+    fn render_activity_errored_shows_err_suffix() {
+        let (glyph, _, suffix) = render_activity(&AgentActivity::Errored {
+            last_error: "boom".into(),
+        });
+        assert_eq!(glyph, "✗");
+        assert_eq!(suffix, "err");
+    }
 }

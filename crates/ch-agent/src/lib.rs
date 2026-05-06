@@ -72,6 +72,33 @@ pub enum AgentState {
     Error,
 }
 
+/// Live, per-request activity status of an agent.
+///
+/// Distinct from `AgentState` (which describes the *lifecycle* — loaded,
+/// stopped, errored at startup) — `AgentActivity` describes what is
+/// happening right now with respect to in-flight requests.  The runtime
+/// updates this as messages flow through `stream_chat` so the TUI can
+/// render live status indicators (●idle / ◐thinking / ✗errored).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentActivity {
+    /// Agent is loaded but has never received a request yet.
+    Unknown,
+    /// Agent is idle and ready.  `last_latency_ms` is the time from
+    /// send to first response chunk on the most recent completed request.
+    Idle { last_latency_ms: Option<u64> },
+    /// Agent is currently processing a request.
+    Thinking { since: DateTime<Utc> },
+    /// The last request errored or produced no chunks.
+    Errored { last_error: String },
+}
+
+impl Default for AgentActivity {
+    fn default() -> Self {
+        AgentActivity::Unknown
+    }
+}
+
 /// Runtime info about a loaded agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
