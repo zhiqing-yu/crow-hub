@@ -12,7 +12,7 @@ vision = false
 code_execution = true
 
 [subprocess]
-command = "/home/linuxbrew/.linuxbrew/bin/gemini"
+command = "/home/zhiqing/.npm-global/bin/gemini"
 args = ["-p"]
 shell = "wsl"
 wsl_distro = "Ubuntu"

@@ -35,6 +35,9 @@ pub struct KnownAgent {
 /// Comprehensive list of known coding CLI agents.
 /// The scanner checks for all of these, but the system is NOT limited
 /// to this list — users can add any custom binary.
+///
+/// NOTE: Model *servers* (Ollama, LM Studio, vLLM, etc.) are intentionally
+/// excluded here. Those are backends handled by `ch-model`, not CLI agents.
 pub fn known_agents() -> Vec<KnownAgent> {
     vec![
         KnownAgent { binary: "claude",    display_name: "Claude Code",    description: "Anthropic Claude Code CLI",       chat: true, code_exec: true },
@@ -44,6 +47,7 @@ pub fn known_agents() -> Vec<KnownAgent> {
         KnownAgent { binary: "cody",      display_name: "Cody",           description: "Sourcegraph Cody CLI",            chat: true, code_exec: false },
         KnownAgent { binary: "copilot",   display_name: "Copilot CLI",    description: "GitHub Copilot CLI",              chat: true, code_exec: false },
         KnownAgent { binary: "openclaw",  display_name: "OpenClaw",       description: "OpenClaw agent",                  chat: true, code_exec: true },
+        KnownAgent { binary: "opencode",  display_name: "OpenCode",       description: "OpenCode AI agent",               chat: true, code_exec: true },
         KnownAgent { binary: "openclaw-browser", display_name: "OpenClaw Browser", description: "OpenClaw browser agent", chat: true, code_exec: true },
         KnownAgent { binary: "hermes",    display_name: "Hermes",         description: "Hermes agent",                    chat: true, code_exec: true },
         KnownAgent { binary: "kimi",      display_name: "Kimi CLI",       description: "Moonshot Kimi CLI",               chat: true, code_exec: false },
@@ -58,8 +62,6 @@ pub fn known_agents() -> Vec<KnownAgent> {
         KnownAgent { binary: "sweep",     display_name: "Sweep",          description: "Sweep AI dev assistant",          chat: true, code_exec: true },
         KnownAgent { binary: "devika",    display_name: "Devika",         description: "Devika AI agent",                 chat: true, code_exec: true },
         KnownAgent { binary: "gpt-engineer", display_name: "GPT-Engineer", description: "GPT-Engineer CLI",              chat: true, code_exec: true },
-
-        KnownAgent { binary: "ollama",    display_name: "Ollama CLI",     description: "Ollama Local CLI",               chat: true, code_exec: false },
     ]
 }
 
@@ -270,40 +272,43 @@ impl EnvironmentScanner {
             .unwrap_or(false)
     }
 
-    /// Check if a binary exists in a WSL distro and return its path
+    /// Check if a binary exists in a WSL distro and return its path.
+    ///
+    /// Strategy: rather than relying on interactive shell init (`-i`) which
+    /// requires a real TTY, we explicitly build PATH from all common install
+    /// locations and manually source nvm/fnm init scripts.
     fn find_binary_wsl(&self, distro: &str, binary: &str) -> Option<String> {
-        // Use bash -ic to source .bashrc where node/npm paths are typically stored.
-        // Fallbacks included for .npm-global and nvm paths explicitly.
-        let script = format!(
-            "which {0} 2>/dev/null || ( [ -f ~/.local/bin/{0} ] && echo ~/.local/bin/{0} ) || ( [ -f ~/.cargo/bin/{0} ] && echo ~/.cargo/bin/{0} ) || ( [ -f /usr/local/bin/{0} ] && echo /usr/local/bin/{0} ) || ( [ -f ~/.npm-global/bin/{0} ] && echo ~/.npm-global/bin/{0} )",
-            binary
-        );
-        
+        let script = Self::probe_script(binary);
+
         let output = Command::new("wsl")
-            .args(["-d", distro, "--", "bash", "-ic", &script])
+            .args(["-d", distro, "--", "bash", "-lc", &script])
             .output()
             .ok()?;
 
         if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(path) = Self::pick_path_from_output(&stdout) {
                 return Some(path);
             }
         }
         None
     }
 
-    /// Check if a binary exists on an SSH host and return its path
+    /// Check if a binary exists on an SSH host and return its path.
+    ///
+    /// Strategy: `bash -ilc` is unreliable over SSH without a real TTY because
+    /// many `.bashrc` files guard themselves with `[ -z "$PS1" ] && return`,
+    /// which causes nvm/fnm init blocks to be skipped even with `-i`.
+    /// Instead we use a login shell (`-lc`) and explicitly source nvm/fnm
+    /// init scripts and build PATH from all common install locations.
     fn find_binary_ssh(&self, host: &str, user: &str, binary: &str) -> Option<String> {
-        let script = format!(
-            "which {0} 2>/dev/null || ( [ -f ~/.local/bin/{0} ] && echo ~/.local/bin/{0} ) || ( [ -f ~/.cargo/bin/{0} ] && echo ~/.cargo/bin/{0} ) || ( [ -f /usr/local/bin/{0} ] && echo /usr/local/bin/{0} ) || ( [ -f ~/.npm-global/bin/{0} ] && echo ~/.npm-global/bin/{0} )",
-            binary
-        );
-        
+        let script = Self::probe_script(binary);
+
         let output = Command::new("ssh")
             .args([
-                "-o", "ConnectTimeout=3",
+                "-o", "ConnectTimeout=5",
                 "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=accept-new",
                 &format!("{}@{}", user, host),
                 "bash", "-lc", &script,
             ])
@@ -311,12 +316,96 @@ impl EnvironmentScanner {
             .ok()?;
 
         if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(path) = Self::pick_path_from_output(&stdout) {
+                debug!("  → found {} on {}@{}: {}", binary, user, host, path);
                 return Some(path);
+            }
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.trim().is_empty() {
+                warn!("  SSH scan stderr for {} on {}@{}: {}", binary, user, host, stderr.trim());
             }
         }
         None
+    }
+
+    /// Build a shell probe script that finds `binary` across all common
+    /// installation paths without requiring an interactive or TTY-backed shell.
+    ///
+    /// The script:
+    ///  1. Sources `.bashrc` by setting a fake `$PS1` to bypass the common
+    ///     `[ -z "$PS1" ] && return` guard, so nvm/fnm init code runs.
+    ///  2. Explicitly initialises nvm and fnm if their init scripts exist but
+    ///     weren't sourced (e.g. when the guard still fired).
+    ///  3. Augments PATH with every well-known install prefix, including the
+    ///     nvm default-version bin dir (sourcing nvm with `--no-use` loads the
+    ///     shell function but does NOT add the active node's bin to PATH).
+    ///  4. Runs `command -v` (POSIX) followed by direct existence checks
+    ///     (`-e` instead of `-f` so symlinks are matched) and a `find` over
+    ///     nvm/fnm trees restricted to `*/bin/<name>` to avoid matching module
+    ///     directories. The `find` uses `\( -type f -o -type l \)` because nvm
+    ///     bin entries are symbolic links, not regular files.
+    fn probe_script(binary: &str) -> String {
+        format!(
+            concat!(
+                // ── 1. Source .bashrc with PS1 trick to bypass interactive guard ──
+                "export PS1='$ '; ",
+                "source ~/.bashrc 2>/dev/null; ",
+                // ── 2. Explicitly init nvm ──
+                "if [ -s ~/.nvm/nvm.sh ]; then",
+                "  source ~/.nvm/nvm.sh --no-use 2>/dev/null; ",
+                "fi; ",
+                // ── 3. Explicitly init fnm ──
+                "if command -v fnm >/dev/null 2>&1; then",
+                "  eval \"$(fnm env --shell bash 2>/dev/null)\" 2>/dev/null; ",
+                "elif [ -x ~/.local/share/fnm/fnm ]; then",
+                "  eval \"$(~/.local/share/fnm/fnm env --shell bash 2>/dev/null)\" 2>/dev/null; ",
+                "fi; ",
+                // ── 4. Build PATH ──
+                // Pick the latest nvm version bin dir with a glob (no `nvm use` needed).
+                "NVM_BIN=$(ls -1d ~/.nvm/versions/node/*/bin 2>/dev/null | tail -1); ",
+                "export PATH=\"$HOME/.local/bin",
+                ":$HOME/.cargo/bin",
+                ":$HOME/.npm-global/bin",
+                ":$HOME/.npm/bin",
+                ":/home/linuxbrew/.linuxbrew/bin",  // Linux Homebrew (system)
+                ":$HOME/.linuxbrew/bin",            // Linux Homebrew (user)
+                ":/opt/homebrew/bin",               // macOS Homebrew (Apple Silicon)
+                ":/usr/local/bin",
+                ":/usr/bin",
+                ":/bin",
+                ":$NVM_BIN",
+                ":$PATH\"; ",
+                // ── 5. Resolve the binary ──
+                "command -v {0} 2>/dev/null",
+                " || ( [ -e /home/linuxbrew/.linuxbrew/bin/{0} ] && echo /home/linuxbrew/.linuxbrew/bin/{0} )",
+                " || ( [ -e ~/.linuxbrew/bin/{0} ]  && readlink -f ~/.linuxbrew/bin/{0} )",
+                " || ( [ -e /opt/homebrew/bin/{0} ] && echo /opt/homebrew/bin/{0} )",
+                " || ( [ -f /usr/local/bin/{0} ]    && echo /usr/local/bin/{0} )",
+                " || ( [ -f ~/.npm-global/bin/{0} ] && echo ~/.npm-global/bin/{0} )",
+                " || ( [ -f ~/.npm/bin/{0} ]        && echo ~/.npm/bin/{0} )",
+                " || find ~/.nvm/versions/node -path '*/bin/{0}' \\( -type f -o -type l \\) 2>/dev/null | head -1",
+                " || find ~/.local/share/fnm -path '*/bin/{0}' \\( -type f -o -type l \\) 2>/dev/null | head -1"
+            ),
+            binary
+        )
+    }
+
+    /// Pick the best absolute path from a command's stdout.
+    ///
+    /// Filters to lines starting with `/` (ignoring MOTD noise, echo messages
+    /// from `.bashrc`, blank lines, etc.) and returns the last such line
+    /// (so that if `find` emits multiple hits we prefer the deepest/latest one).
+    fn pick_path_from_output(stdout: &str) -> Option<String> {
+        let path = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && l.starts_with('/'))
+            .last()
+            .unwrap_or("")
+            .to_string();
+        if path.is_empty() { None } else { Some(path) }
     }
 
 
@@ -376,7 +465,7 @@ impl DiscoveredAgent {
                 None,
                 vec!["-p".to_string()],
             ),
-            "claude" | "aider" => (
+            "claude" | "aider" | "opencode" => (
                 SubprocessInputMode::Argv,
                 SubprocessOutputMode::Raw,
                 None,

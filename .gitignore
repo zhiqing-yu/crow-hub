@@ -11,6 +11,9 @@ Cargo.lock
 *.swo
 *~
 
+# Claude Code local settings (per-machine, IDE-touched on every session)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db
