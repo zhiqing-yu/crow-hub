@@ -1,0 +1,31 @@
+[agent]
+name = "codex-ssh-1"
+version = "1.0.0"
+description = "OpenAI Codex CLI"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = true
+
+[subprocess]
+command = "/home/linuxbrew/.linuxbrew/bin/codex"
+args = ["exec", "--skip-git-repo-check", "--color", "never"]
+shell = "ssh"
+ssh_host = "192.168.50.1"
+ssh_user = "zhiqing"
+input_mode = "argv"
+output_mode = "raw"
+# codex is `#!/usr/bin/env node` and lives in linuxbrew alongside node, but
+# the host-env probe doesn't capture the linuxbrew prefix because the host's
+# .bashrc bails on non-interactive shells before the brew shellenv runs.
+# Prepend it here so /usr/bin/env can find node.
+setup_script = "export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH"
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]

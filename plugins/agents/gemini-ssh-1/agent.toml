@@ -1,7 +1,7 @@
 [agent]
-name = "openclaw-ssh-1"
+name = "gemini-ssh-1"
 version = "1.0.0"
-description = "OpenClaw agent"
+description = "Google Gemini CLI"
 driver = "subprocess"
 
 [capabilities]
@@ -12,21 +12,13 @@ vision = false
 code_execution = true
 
 [subprocess]
-command = "/home/zhiqing/.nvm/versions/node/v24.14.0/bin/openclaw"
-args = [
-    "agent",
-    "--agent",
-    "main",
-    "--local",
-    "--json",
-    "-m",
-]
+command = "/home/linuxbrew/.linuxbrew/bin/gemini"
+args = ["-p"]
 shell = "ssh"
 ssh_host = "192.168.50.1"
 ssh_user = "zhiqing"
 input_mode = "argv"
-output_mode = "json"
-output_filter = "finalAssistantVisibleText"
+output_mode = "raw"
 
 [subprocess.env]
 
