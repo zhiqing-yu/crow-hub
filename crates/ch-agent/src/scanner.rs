@@ -15,6 +15,35 @@ use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, info, warn};
 
+// ── Shared shell prelude for discovery + execution ───────────
+
+/// Shell prelude that ensures node/python/etc. are on `$PATH` for
+/// non-interactive remote shells (SSH, and `wsl -- bash -c`).
+///
+/// Sources `.bashrc` with a fake `$PS1` to bypass the common
+/// `[ -z "$PS1" ] && return` guard so nvm/fnm init code runs.
+/// Sources nvm and fnm when present, and explicitly augments `$PATH`
+/// with every common install prefix.
+///
+/// Used by:
+/// * [`EnvironmentScanner::probe_script`] — for binary *discovery*
+/// * [`crate::drivers::subprocess::compose_remote_invocation`] —
+///   for binary *execution*
+///
+/// Keeping the discovery and execution preludes identical guarantees
+/// that any binary the scanner can find, the driver can also invoke.
+pub(crate) const SHELL_SETUP_PRELUDE: &str = "\
+export PS1='$ '; \
+source ~/.bashrc 2>/dev/null; \
+if [ -s ~/.nvm/nvm.sh ]; then source ~/.nvm/nvm.sh 2>/dev/null; fi; \
+if command -v fnm >/dev/null 2>&1; then \
+  eval \"$(fnm env --shell bash 2>/dev/null)\" 2>/dev/null; \
+elif [ -x ~/.local/share/fnm/fnm ]; then \
+  eval \"$(~/.local/share/fnm/fnm env --shell bash 2>/dev/null)\" 2>/dev/null; \
+fi; \
+NVM_BIN=$(ls -1d ~/.nvm/versions/node/*/bin 2>/dev/null | tail -1); \
+export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.npm-global/bin:$HOME/.npm/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$NVM_BIN:$PATH\"";
+
 // ── Well-known CLI agents ────────────────────────────────────
 
 /// A well-known CLI agent binary and its metadata.
@@ -333,62 +362,26 @@ impl EnvironmentScanner {
     /// Build a shell probe script that finds `binary` across all common
     /// installation paths without requiring an interactive or TTY-backed shell.
     ///
-    /// The script:
-    ///  1. Sources `.bashrc` by setting a fake `$PS1` to bypass the common
-    ///     `[ -z "$PS1" ] && return` guard, so nvm/fnm init code runs.
-    ///  2. Explicitly initialises nvm and fnm if their init scripts exist but
-    ///     weren't sourced (e.g. when the guard still fired).
-    ///  3. Augments PATH with every well-known install prefix, including the
-    ///     nvm default-version bin dir (sourcing nvm with `--no-use` loads the
-    ///     shell function but does NOT add the active node's bin to PATH).
-    ///  4. Runs `command -v` (POSIX) followed by direct existence checks
-    ///     (`-e` instead of `-f` so symlinks are matched) and a `find` over
-    ///     nvm/fnm trees restricted to `*/bin/<name>` to avoid matching module
-    ///     directories. The `find` uses `\( -type f -o -type l \)` because nvm
-    ///     bin entries are symbolic links, not regular files.
+    /// Reuses [`SHELL_SETUP_PRELUDE`] (the same prelude the driver uses for
+    /// execution) and then runs `command -v` followed by direct existence
+    /// checks and a `find` over nvm/fnm trees restricted to `*/bin/<name>`
+    /// to avoid matching module directories.  The `find` uses
+    /// `\( -type f -o -type l \)` because nvm bin entries are symlinks,
+    /// not regular files.
     fn probe_script(binary: &str) -> String {
         format!(
-            concat!(
-                // ── 1. Source .bashrc with PS1 trick to bypass interactive guard ──
-                "export PS1='$ '; ",
-                "source ~/.bashrc 2>/dev/null; ",
-                // ── 2. Explicitly init nvm ──
-                "if [ -s ~/.nvm/nvm.sh ]; then",
-                "  source ~/.nvm/nvm.sh --no-use 2>/dev/null; ",
-                "fi; ",
-                // ── 3. Explicitly init fnm ──
-                "if command -v fnm >/dev/null 2>&1; then",
-                "  eval \"$(fnm env --shell bash 2>/dev/null)\" 2>/dev/null; ",
-                "elif [ -x ~/.local/share/fnm/fnm ]; then",
-                "  eval \"$(~/.local/share/fnm/fnm env --shell bash 2>/dev/null)\" 2>/dev/null; ",
-                "fi; ",
-                // ── 4. Build PATH ──
-                // Pick the latest nvm version bin dir with a glob (no `nvm use` needed).
-                "NVM_BIN=$(ls -1d ~/.nvm/versions/node/*/bin 2>/dev/null | tail -1); ",
-                "export PATH=\"$HOME/.local/bin",
-                ":$HOME/.cargo/bin",
-                ":$HOME/.npm-global/bin",
-                ":$HOME/.npm/bin",
-                ":/home/linuxbrew/.linuxbrew/bin",  // Linux Homebrew (system)
-                ":$HOME/.linuxbrew/bin",            // Linux Homebrew (user)
-                ":/opt/homebrew/bin",               // macOS Homebrew (Apple Silicon)
-                ":/usr/local/bin",
-                ":/usr/bin",
-                ":/bin",
-                ":$NVM_BIN",
-                ":$PATH\"; ",
-                // ── 5. Resolve the binary ──
-                "command -v {0} 2>/dev/null",
-                " || ( [ -e /home/linuxbrew/.linuxbrew/bin/{0} ] && echo /home/linuxbrew/.linuxbrew/bin/{0} )",
-                " || ( [ -e ~/.linuxbrew/bin/{0} ]  && readlink -f ~/.linuxbrew/bin/{0} )",
-                " || ( [ -e /opt/homebrew/bin/{0} ] && echo /opt/homebrew/bin/{0} )",
-                " || ( [ -f /usr/local/bin/{0} ]    && echo /usr/local/bin/{0} )",
-                " || ( [ -f ~/.npm-global/bin/{0} ] && echo ~/.npm-global/bin/{0} )",
-                " || ( [ -f ~/.npm/bin/{0} ]        && echo ~/.npm/bin/{0} )",
-                " || find ~/.nvm/versions/node -path '*/bin/{0}' \\( -type f -o -type l \\) 2>/dev/null | head -1",
-                " || find ~/.local/share/fnm -path '*/bin/{0}' \\( -type f -o -type l \\) 2>/dev/null | head -1"
-            ),
-            binary
+            "{prelude}; \
+             command -v {bin} 2>/dev/null \
+             || ( [ -e /home/linuxbrew/.linuxbrew/bin/{bin} ] && echo /home/linuxbrew/.linuxbrew/bin/{bin} ) \
+             || ( [ -e ~/.linuxbrew/bin/{bin} ]  && readlink -f ~/.linuxbrew/bin/{bin} ) \
+             || ( [ -e /opt/homebrew/bin/{bin} ] && echo /opt/homebrew/bin/{bin} ) \
+             || ( [ -f /usr/local/bin/{bin} ]    && echo /usr/local/bin/{bin} ) \
+             || ( [ -f ~/.npm-global/bin/{bin} ] && echo ~/.npm-global/bin/{bin} ) \
+             || ( [ -f ~/.npm/bin/{bin} ]        && echo ~/.npm/bin/{bin} ) \
+             || find ~/.nvm/versions/node -path '*/bin/{bin}' \\( -type f -o -type l \\) 2>/dev/null | head -1 \
+             || find ~/.local/share/fnm -path '*/bin/{bin}' \\( -type f -o -type l \\) 2>/dev/null | head -1",
+            prelude = SHELL_SETUP_PRELUDE,
+            bin = binary,
         )
     }
 

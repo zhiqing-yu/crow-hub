@@ -10,6 +10,7 @@
 
 use crate::drivers::AgentDriver;
 use crate::manifest::{ShellType, SubprocessSection, SubprocessInputMode, SubprocessOutputMode};
+use crate::scanner::SHELL_SETUP_PRELUDE;
 use crate::{AgentError, Result};
 use ch_model::{ChatRequest, ChatResponse, ChatStreamChunk, ChatRole, FinishReason, TokenUsage};
 use futures::stream::{self, BoxStream, StreamExt};
@@ -19,6 +20,46 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+
+// ── Shell quoting + remote invocation helpers ─────────────────
+
+/// POSIX-safe shell quoting: wraps `s` in single quotes and escapes any
+/// embedded single quotes as `'\''` (close, escape, single, open).
+/// Returns the input unchanged if it consists entirely of safe characters
+/// (`A-Za-z0-9_/-.:,=@`).
+fn shell_quote(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    let safe = s.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '-' | '.' | ':' | ',' | '=' | '@')
+    });
+    if safe {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Build a single shell command string for remote execution that
+/// (1) sets up `$PATH` so nvm/fnm/Homebrew binaries are resolvable, and
+/// (2) `exec`s the agent binary with its args (and an optional prompt
+/// appended as the final positional arg).
+///
+/// The result is intended to be passed to `bash -c '<this>'` over SSH
+/// (one argv slot, since ssh joins remote args with spaces) or to
+/// `wsl -e bash -c '<this>'` (WSL passes argv directly).
+fn compose_remote_invocation(
+    command: &str,
+    args: &[String],
+    prompt: Option<&str>,
+) -> String {
+    let parts: Vec<String> = std::iter::once(command.to_string())
+        .chain(args.iter().cloned())
+        .chain(prompt.map(|p| p.to_string()))
+        .map(|s| shell_quote(&s))
+        .collect();
+    format!("{}; exec {}", SHELL_SETUP_PRELUDE, parts.join(" "))
+}
 
 /// Driver that spawns CLI agents as subprocesses
 pub struct SubprocessDriver {
@@ -40,12 +81,26 @@ impl SubprocessDriver {
         }
     }
 
-    /// Build the command based on shell type
-    fn build_command(&self) -> Command {
+    /// Build the command based on shell type.
+    ///
+    /// `prompt` is an optional final positional argument to append to the
+    /// agent's invocation (used by Argv-mode `chat()` / `stream_chat()` —
+    /// pass `None` for persistent-process modes that send prompts over
+    /// stdin instead).
+    ///
+    /// For WSL and SSH, this wraps the invocation in `bash -c '<prelude>;
+    /// exec <quoted-cmd-and-args>'` so non-interactive remote shells get
+    /// nvm/fnm/Homebrew on `$PATH` (mirroring what the scanner does for
+    /// discovery).  The prompt is shell-quoted into the inner string —
+    /// callers must NOT append it after this returns.
+    fn build_command(&self, prompt: Option<&str>) -> Command {
         match self.config.shell {
             ShellType::Native => {
                 let mut cmd = Command::new(&self.config.command);
                 cmd.args(&self.config.args);
+                if let Some(p) = prompt {
+                    cmd.arg(p);
+                }
                 if let Some(ref dir) = self.config.working_dir {
                     cmd.current_dir(dir);
                 }
@@ -55,6 +110,11 @@ impl SubprocessDriver {
                 cmd
             }
             ShellType::Wsl => {
+                let inner = compose_remote_invocation(
+                    &self.config.command,
+                    &self.config.args,
+                    prompt,
+                );
                 let mut cmd = Command::new("wsl.exe");
                 // Avoid polluting WSL path with Windows paths by clearing WSLENV
                 cmd.env_remove("WSLENV");
@@ -62,23 +122,31 @@ impl SubprocessDriver {
                 if let Some(ref distro) = self.config.wsl_distro {
                     cmd.args(["-d", distro]);
                 }
-                
-                // Wrap in a login shell so NVM/Node paths from ~/.bashrc are available
-                cmd.args(["-e", "bash", "-lc", "exec \"$@\"", "bash"]);
-                
-                cmd.arg(&self.config.command);
-                cmd.args(&self.config.args);
+                // `-e bash -c <inner>` runs `bash -c '<setup>; exec <cmd> <args>'`
+                // — `wsl -e` passes argv directly so we can use a single
+                // `<inner>` slot without any extra quoting on top.
+                cmd.args(["-e", "bash", "-c"]);
+                cmd.arg(&inner);
                 cmd
             }
             ShellType::Ssh => {
+                let inner = compose_remote_invocation(
+                    &self.config.command,
+                    &self.config.args,
+                    prompt,
+                );
                 let mut cmd = Command::new("ssh");
-
-                // Add key if specified
+                // Match the scanner's SSH options so connections never prompt
+                // and fail fast on first-connect host-key prompts.
+                cmd.args([
+                    "-o", "BatchMode=yes",
+                    "-o", "ConnectTimeout=10",
+                    "-o", "StrictHostKeyChecking=accept-new",
+                ]);
                 if let Some(ref key) = self.config.ssh_key {
                     cmd.args(["-i", key]);
                 }
 
-                // Build user@host
                 let host = self.config.ssh_host.as_deref().unwrap_or("localhost");
                 let target = if let Some(ref user) = self.config.ssh_user {
                     format!("{}@{}", user, host)
@@ -87,9 +155,12 @@ impl SubprocessDriver {
                 };
                 cmd.arg(&target);
 
-                // The remote command
-                cmd.arg(&self.config.command);
-                cmd.args(&self.config.args);
+                // CRITICAL: ssh joins all remote args with spaces and runs
+                // the result via the remote `/bin/sh -c …`.  Therefore we
+                // MUST pass `bash -c '<inner>'` as ONE shell-quoted string,
+                // not as three separate argv slots — otherwise <inner> would
+                // be split on every space by the remote shell.
+                cmd.arg(format!("bash -c {}", shell_quote(&inner)));
                 cmd
             }
         }
@@ -97,7 +168,9 @@ impl SubprocessDriver {
 
     /// Start the subprocess
     pub async fn start(&self) -> Result<()> {
-        let mut cmd = self.build_command();
+        // Persistent-process modes (Json/Plain) — prompt is sent over
+        // stdin later, not as an argv, so pass `None` here.
+        let mut cmd = self.build_command(None);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -197,10 +270,12 @@ impl AgentDriver for SubprocessDriver {
             .map(|m| m.content.clone())
             .unwrap_or_default();
 
-        // If we are in Argv mode, we spawn a fresh process for this message
+        // If we are in Argv mode, we spawn a fresh process for this message.
+        // The prompt is baked into the inner shell command by build_command
+        // (so it lands inside the SSH/WSL `bash -c '…'` wrapper) — do NOT
+        // append `cmd.arg(&prompt)` after this returns.
         if self.config.input_mode == SubprocessInputMode::Argv {
-            let mut cmd = self.build_command();
-            cmd.arg(&prompt);
+            let mut cmd = self.build_command(Some(&prompt));
             cmd.stdin(Stdio::null());
 
             let output = cmd.output().await
@@ -362,12 +437,14 @@ impl AgentDriver for SubprocessDriver {
             .map(|m| m.content.clone())
             .unwrap_or_default();
 
-        // Argv mode: spawn a fresh process and stream stdout line-by-line
-        // Note: Structured JSON outputs are often multi-line, which breaks line-by-line parsing.
-        // We fall through to `chat()` for Json output mode to accumulate and parse correctly.
+        // Argv mode: spawn a fresh process and stream stdout line-by-line.
+        // The prompt is baked into build_command's inner shell wrapper for
+        // SSH/WSL — do NOT append `cmd.arg(&prompt)` after this returns.
+        // Structured JSON outputs are often multi-line, which breaks
+        // line-by-line parsing — fall through to `chat()` for Json output
+        // mode to accumulate and parse correctly.
         if self.config.input_mode == SubprocessInputMode::Argv && self.config.output_mode != SubprocessOutputMode::Json {
-            let mut cmd = self.build_command();
-            cmd.arg(&prompt);
+            let mut cmd = self.build_command(Some(&prompt));
             cmd.stdin(Stdio::null());
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
@@ -527,6 +604,117 @@ struct SubprocessResponse {
 mod tests {
     use super::*;
 
+    // ── shell_quote ────────────────────────────────────────────
+
+    #[test]
+    fn shell_quote_safe_passthrough() {
+        assert_eq!(shell_quote("hello"), "hello");
+        assert_eq!(shell_quote("/usr/local/bin/foo"), "/usr/local/bin/foo");
+        assert_eq!(shell_quote("--flag=value"), "--flag=value");
+        assert_eq!(shell_quote("v24.14.0"), "v24.14.0");
+        assert_eq!(shell_quote("user@host"), "user@host");
+    }
+
+    #[test]
+    fn shell_quote_wraps_spaces() {
+        assert_eq!(shell_quote("hello world"), "'hello world'");
+        assert_eq!(shell_quote("say  hi"), "'say  hi'");
+    }
+
+    #[test]
+    fn shell_quote_escapes_single_quote() {
+        // 'it'\''s' — close, escape, single, reopen.
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_quote("'leading"), r"''\''leading'");
+    }
+
+    #[test]
+    fn shell_quote_double_quotes_left_alone() {
+        // Double quotes are safe inside single-quoted strings — no escaping.
+        assert_eq!(shell_quote(r#"say "hi""#), r#"'say "hi"'"#);
+    }
+
+    #[test]
+    fn shell_quote_empty() {
+        assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn shell_quote_special_shell_chars_get_quoted() {
+        // Globs, $vars, semicolons, backticks, pipes, redirections — all must
+        // be inside single quotes so the remote shell doesn't interpret them.
+        for s in [
+            "*.rs",
+            "$HOME",
+            "a;b",
+            "`cmd`",
+            "a|b",
+            "a>b",
+            "a&b",
+            "a(b)c",
+            "a[b]c",
+            "a{b}c",
+        ] {
+            let q = shell_quote(s);
+            assert!(q.starts_with('\''), "expected {:?} to be quoted, got {:?}", s, q);
+        }
+    }
+
+    // ── compose_remote_invocation ──────────────────────────────
+
+    #[test]
+    fn compose_remote_invocation_includes_prelude_and_quoted_args() {
+        let s = compose_remote_invocation(
+            "/home/u/.nvm/versions/node/v24/bin/openclaw",
+            &[
+                "agent".into(),
+                "--agent".into(),
+                "main".into(),
+                "--json".into(),
+                "-m".into(),
+            ],
+            Some("hello world"),
+        );
+
+        // The prelude is in there
+        assert!(s.contains("nvm.sh"), "prelude must source nvm");
+        assert!(s.contains("export PATH"), "prelude must augment PATH");
+
+        // The exec line follows the prelude
+        assert!(s.contains("; exec "), "must end with `; exec <args>`");
+
+        // Each argument is preserved (paths and flags pass through as-is)
+        assert!(s.contains("/home/u/.nvm/versions/node/v24/bin/openclaw"));
+        assert!(s.contains("agent"));
+        assert!(s.contains("--agent"));
+        assert!(s.contains("--json"));
+
+        // The prompt is shell-quoted (because of the space) and is the LAST
+        // positional argument to exec.
+        assert!(s.contains("'hello world'"));
+        assert!(s.ends_with("'hello world'"));
+    }
+
+    #[test]
+    fn compose_remote_invocation_without_prompt() {
+        let s = compose_remote_invocation(
+            "/usr/local/bin/claude",
+            &[],
+            None,
+        );
+        // No trailing prompt, just the binary
+        assert!(s.ends_with("/usr/local/bin/claude"));
+    }
+
+    #[test]
+    fn compose_remote_invocation_quotes_prompt_with_single_quote() {
+        let s = compose_remote_invocation("/bin/echo", &[], Some("it's me"));
+        // Single quote inside the prompt is properly POSIX-escaped
+        assert!(s.contains(r"'it'\''s me'"), "got: {}", s);
+    }
+
+    // ── build_command ──────────────────────────────────────────
+
     #[test]
     fn test_build_native_command() {
         let config = SubprocessSection {
@@ -544,7 +732,7 @@ mod tests {
             output_filter: None,
         };
         let driver = SubprocessDriver::new("test", config);
-        let _cmd = driver.build_command();
+        let _cmd = driver.build_command(None);
         // Verify it builds without panic
         assert_eq!(driver.driver_type(), "subprocess/native");
     }
