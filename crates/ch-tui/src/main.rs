@@ -87,6 +87,19 @@ enum Commands {
         #[arg(short, long)]
         prompt: Option<String>,
     },
+
+    /// Invalidate the cached host environment so the next agent load
+    /// re-probes for the user's interactive `$PATH`.  Use after installing
+    /// a new version manager or changing `~/.bashrc` so crow-hub picks up
+    /// the new tools without needing a restart.
+    RefreshEnv {
+        /// Optional host filter — accepts:
+        ///   * "wsl:<distro>"  e.g. "wsl:Ubuntu"
+        ///   * "ssh:<user>@<host>"  e.g. "ssh:zhiqing@192.168.50.1"
+        ///   * "native"
+        ///   * (omitted) — refresh ALL hosts
+        host: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -220,6 +233,10 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Doctor { agent, prompt }) => {
             let prompt = prompt.unwrap_or_else(|| "Say hello in one short sentence.".to_string());
             run_doctor(config, agent, prompt).await?;
+        }
+
+        Some(Commands::RefreshEnv { host }) => {
+            run_refresh_env(host)?;
         }
     }
 
@@ -428,6 +445,43 @@ async fn send_message(
     Ok(())
 }
 
+/// Drop the host-env cache (in-memory + on-disk) so the next agent load
+/// re-probes the user's interactive shell for `$PATH` and friends.
+fn run_refresh_env(host: Option<String>) -> anyhow::Result<()> {
+    let cache = ch_agent::HostEnvCache::new();
+    match host.as_deref() {
+        None => {
+            cache.invalidate_all()?;
+            println!("✓ Refreshed all cached host envs.");
+            println!("  Next time you load agents (run `crow` or `crow doctor <agent>`),");
+            println!("  the user's shell will be re-probed for PATH/NVM_DIR/etc.");
+        }
+        Some(spec) => {
+            let key = parse_host_spec(spec)?;
+            cache.invalidate(&key)?;
+            println!("✓ Refreshed cached env for {}.", key.label());
+        }
+    }
+    Ok(())
+}
+
+/// Parse a CLI host spec like "wsl:Ubuntu", "ssh:user@host", or "native".
+fn parse_host_spec(spec: &str) -> anyhow::Result<ch_agent::HostKey> {
+    if spec == "native" {
+        return Ok(ch_agent::HostKey::Native);
+    }
+    if let Some(distro) = spec.strip_prefix("wsl:") {
+        return Ok(ch_agent::HostKey::Wsl(distro.to_string()));
+    }
+    if let Some(target) = spec.strip_prefix("ssh:") {
+        return Ok(ch_agent::HostKey::Ssh(target.to_string()));
+    }
+    anyhow::bail!(
+        "unrecognized host spec '{}'. Expected one of: native, wsl:<distro>, ssh:<user>@<host>",
+        spec
+    );
+}
+
 /// Diagnostic: load an agent, build its driver, send one prompt through
 /// `driver.chat()`, and print the result. Bypasses the bus and TUI so the
 /// user sees exactly what the underlying driver does with the current
@@ -495,7 +549,28 @@ async fn run_doctor(
                     return Ok(());
                 }
             };
-            Arc::new(SubprocessDriver::new(&agent_name, sub.clone()))
+            // Probe (or hit cache) for the host's interactive env so the
+            // doctor invocation goes through the same PATH-aware path the
+            // runtime uses.  Without this, the doctor would have a
+            // different (possibly broken) execution environment than what
+            // agents in the TUI actually use — defeating the diagnostic
+            // purpose.
+            let cache = ch_agent::HostEnvCache::new();
+            let host_key = ch_agent::runtime::derive_host_key(sub);
+            println!("Host:     {}", host_key.label());
+            let env_started = std::time::Instant::now();
+            let host_env = cache.get_or_probe(&host_key);
+            println!(
+                "Env:      {} vars, {} ms ({} mode)",
+                host_env.vars.len(),
+                env_started.elapsed().as_millis(),
+                if host_env.vars.is_empty() { "fallback" } else { "probed/cached" },
+            );
+            if let Some(ref ss) = sub.setup_script {
+                println!("Setup:    {} chars", ss.len());
+            }
+            println!();
+            Arc::new(SubprocessDriver::with_env(&agent_name, sub.clone(), host_env))
         }
         DriverType::Tmux => {
             let tmux = match manifest.tmux.as_ref() {

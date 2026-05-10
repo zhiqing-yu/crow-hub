@@ -9,8 +9,8 @@
 //! - SSH: runs via `ssh <user>@<host> <command>`
 
 use crate::drivers::AgentDriver;
+use crate::host_env::HostEnv;
 use crate::manifest::{ShellType, SubprocessSection, SubprocessInputMode, SubprocessOutputMode};
-use crate::scanner::SHELL_SETUP_PRELUDE;
 use crate::{AgentError, Result};
 use ch_model::{ChatRequest, ChatResponse, ChatStreamChunk, ChatRole, FinishReason, TokenUsage};
 use futures::stream::{self, BoxStream, StreamExt};
@@ -40,25 +40,74 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Build a single shell command string for remote execution that
-/// (1) sets up `$PATH` so nvm/fnm/Homebrew binaries are resolvable, and
-/// (2) `exec`s the agent binary with its args (and an optional prompt
-/// appended as the final positional arg).
+/// Build a single shell command string for remote execution.
 ///
-/// The result is intended to be passed to `bash -c '<this>'` over SSH
-/// (one argv slot, since ssh joins remote args with spaces) or to
-/// `wsl -e bash -c '<this>'` (WSL passes argv directly).
+/// Strategy: prefix the agent binary with `env KEY=VAL ...` to override
+/// `$PATH` (and a handful of other vars) with the host's cached interactive
+/// env — captured once via `bash -lc env`.  This is generic across version
+/// managers (nvm/fnm/volta/asdf/mise/etc.) because we don't *guess* paths,
+/// we *use the user's actual shell PATH*.
+///
+/// If the manifest provides a `setup_script` (per-agent escape hatch — e.g.
+/// `source venv/bin/activate`), wrap the invocation in `bash -c '<setup>;
+/// exec <cmd> <args>'` so the script runs in a real shell before exec.
+///
+/// The result is intended to be passed:
+///   * for SSH — as **one** argv slot to `ssh user@host` (since ssh joins
+///     remote args with spaces, multi-slot would be split-on-space by the
+///     remote shell);
+///   * for WSL — as the trailing arg to `wsl -e <this>` (WSL preserves argv).
 fn compose_remote_invocation(
     command: &str,
     args: &[String],
     prompt: Option<&str>,
+    host_env: &HostEnv,
+    setup_script: Option<&str>,
 ) -> String {
-    let parts: Vec<String> = std::iter::once(command.to_string())
+    // 1. Build the `env KEY=VAL ...` prefix from the cached host env.
+    let mut env_parts: Vec<String> = host_env
+        .iter_sorted()
+        .into_iter()
+        .map(|(k, v)| format!("{}={}", k, shell_quote(v)))
+        .collect();
+
+    // 2. Build the command + args + (optional) prompt, each shell-quoted.
+    let mut cmd_parts: Vec<String> = std::iter::once(command.to_string())
         .chain(args.iter().cloned())
         .chain(prompt.map(|p| p.to_string()))
         .map(|s| shell_quote(&s))
         .collect();
-    format!("{}; exec {}", SHELL_SETUP_PRELUDE, parts.join(" "))
+
+    match setup_script {
+        // No setup script — just `env KEY=VAL ... cmd args`.  The remote
+        // shell runs this directly; no bash wrapper needed.  If env_parts is
+        // empty (e.g. probe failed), this collapses to just `cmd args` which
+        // also works (relying on the remote shell's default PATH).
+        None => {
+            let mut all = Vec::with_capacity(1 + env_parts.len() + cmd_parts.len());
+            if !env_parts.is_empty() {
+                all.push("env".to_string());
+                all.append(&mut env_parts);
+            }
+            all.append(&mut cmd_parts);
+            all.join(" ")
+        }
+        // With setup script — wrap in bash -c so the script can use shell
+        // builtins (source, alias, function, etc.).  The `env` prefix still
+        // applies so the bash invocation itself sees the cached PATH.
+        Some(script) => {
+            let inner = format!("{}; exec {}", script.trim(), cmd_parts.join(" "));
+            let mut all = Vec::with_capacity(env_parts.len() + 4);
+            if !env_parts.is_empty() {
+                all.push("env".to_string());
+                all.append(&mut env_parts);
+            }
+            all.push("bash".to_string());
+            all.push("-c".to_string());
+            all.push(shell_quote(&inner));
+            all.join(" ")
+        }
+    }
 }
 
 /// Driver that spawns CLI agents as subprocesses
@@ -67,16 +116,33 @@ pub struct SubprocessDriver {
     name: String,
     /// Subprocess configuration
     config: SubprocessSection,
+    /// Captured host env (PATH etc. from the user's interactive shell).
+    /// Defaults to empty, in which case the remote shell's default PATH
+    /// is used — which is the old behavior.
+    host_env: HostEnv,
     /// Running child process (if started)
     child: Mutex<Option<Child>>,
 }
 
 impl SubprocessDriver {
-    /// Create a new subprocess driver
+    /// Create a driver with no host-env knowledge (uses the remote shell's
+    /// default PATH).  Mostly useful for tests; production code goes
+    /// through [`with_env`] with a probed [`HostEnv`].
     pub fn new(name: impl Into<String>, config: SubprocessSection) -> Self {
+        Self::with_env(name, config, HostEnv::default())
+    }
+
+    /// Create a driver with a pre-probed host env.  Used by the runtime
+    /// at agent-load time.
+    pub fn with_env(
+        name: impl Into<String>,
+        config: SubprocessSection,
+        host_env: HostEnv,
+    ) -> Self {
         Self {
             name: name.into(),
             config,
+            host_env,
             child: Mutex::new(None),
         }
     }
@@ -114,6 +180,8 @@ impl SubprocessDriver {
                     &self.config.command,
                     &self.config.args,
                     prompt,
+                    &self.host_env,
+                    self.config.setup_script.as_deref(),
                 );
                 let mut cmd = Command::new("wsl.exe");
                 // Avoid polluting WSL path with Windows paths by clearing WSLENV
@@ -122,10 +190,13 @@ impl SubprocessDriver {
                 if let Some(ref distro) = self.config.wsl_distro {
                     cmd.args(["-d", distro]);
                 }
-                // `-e bash -c <inner>` runs `bash -c '<setup>; exec <cmd> <args>'`
-                // — `wsl -e` passes argv directly so we can use a single
-                // `<inner>` slot without any extra quoting on top.
-                cmd.args(["-e", "bash", "-c"]);
+                // `wsl -e <argv...>` runs the trailing argv directly.  We
+                // wrap in `sh -c '<inner>'` because `<inner>` is itself a
+                // shell command (env KEY=VAL ... cmd args, possibly with
+                // bash -c '...' inside if there's a setup_script).  Using
+                // the lighter `sh -c` instead of `bash -c` here just to
+                // run the env-prefix command — no shell features needed.
+                cmd.args(["-e", "sh", "-c"]);
                 cmd.arg(&inner);
                 cmd
             }
@@ -134,6 +205,8 @@ impl SubprocessDriver {
                     &self.config.command,
                     &self.config.args,
                     prompt,
+                    &self.host_env,
+                    self.config.setup_script.as_deref(),
                 );
                 let mut cmd = Command::new("ssh");
                 // Match the scanner's SSH options so connections never prompt
@@ -155,12 +228,11 @@ impl SubprocessDriver {
                 };
                 cmd.arg(&target);
 
-                // CRITICAL: ssh joins all remote args with spaces and runs
-                // the result via the remote `/bin/sh -c …`.  Therefore we
-                // MUST pass `bash -c '<inner>'` as ONE shell-quoted string,
-                // not as three separate argv slots — otherwise <inner> would
-                // be split on every space by the remote shell.
-                cmd.arg(format!("bash -c {}", shell_quote(&inner)));
+                // ssh joins all remote args with spaces and runs the result
+                // via the remote `/bin/sh -c …`.  `<inner>` is already a
+                // valid shell command (env KEY=VAL ... cmd args), so we can
+                // pass it as one argv slot — no extra wrapping needed.
+                cmd.arg(&inner);
                 cmd
             }
         }
@@ -662,8 +734,15 @@ mod tests {
 
     // ── compose_remote_invocation ──────────────────────────────
 
+    fn fake_env() -> HostEnv {
+        let mut env = HostEnv::new();
+        env.vars.insert("PATH".into(), "/home/u/.nvm/versions/node/v24/bin:/usr/bin".into());
+        env.vars.insert("NVM_DIR".into(), "/home/u/.nvm".into());
+        env
+    }
+
     #[test]
-    fn compose_remote_invocation_includes_prelude_and_quoted_args() {
+    fn compose_remote_invocation_prefixes_env_and_quotes_args() {
         let s = compose_remote_invocation(
             "/home/u/.nvm/versions/node/v24/bin/openclaw",
             &[
@@ -674,25 +753,36 @@ mod tests {
                 "-m".into(),
             ],
             Some("hello world"),
+            &fake_env(),
+            None,
         );
 
-        // The prelude is in there
-        assert!(s.contains("nvm.sh"), "prelude must source nvm");
-        assert!(s.contains("export PATH"), "prelude must augment PATH");
+        // env prefix is present and assigns each captured var
+        assert!(s.starts_with("env "), "must start with `env ...`");
+        assert!(s.contains("NVM_DIR=/home/u/.nvm"));
+        assert!(s.contains("PATH=/home/u/.nvm/versions/node/v24/bin:/usr/bin"));
 
-        // The exec line follows the prelude
-        assert!(s.contains("; exec "), "must end with `; exec <args>`");
-
-        // Each argument is preserved (paths and flags pass through as-is)
+        // Args preserved (paths and flags pass through as-is)
         assert!(s.contains("/home/u/.nvm/versions/node/v24/bin/openclaw"));
         assert!(s.contains("agent"));
         assert!(s.contains("--agent"));
         assert!(s.contains("--json"));
 
-        // The prompt is shell-quoted (because of the space) and is the LAST
-        // positional argument to exec.
-        assert!(s.contains("'hello world'"));
+        // Prompt with space is shell-quoted and is the final token
         assert!(s.ends_with("'hello world'"));
+    }
+
+    #[test]
+    fn compose_remote_invocation_with_empty_env_skips_prefix() {
+        // No probe data → no `env` prefix; bare command.
+        let s = compose_remote_invocation(
+            "/usr/local/bin/claude",
+            &[],
+            None,
+            &HostEnv::new(),
+            None,
+        );
+        assert_eq!(s, "/usr/local/bin/claude");
     }
 
     #[test]
@@ -701,16 +791,58 @@ mod tests {
             "/usr/local/bin/claude",
             &[],
             None,
+            &fake_env(),
+            None,
         );
-        // No trailing prompt, just the binary
         assert!(s.ends_with("/usr/local/bin/claude"));
+        assert!(s.starts_with("env "));
     }
 
     #[test]
     fn compose_remote_invocation_quotes_prompt_with_single_quote() {
-        let s = compose_remote_invocation("/bin/echo", &[], Some("it's me"));
+        let s = compose_remote_invocation(
+            "/bin/echo",
+            &[],
+            Some("it's me"),
+            &fake_env(),
+            None,
+        );
         // Single quote inside the prompt is properly POSIX-escaped
         assert!(s.contains(r"'it'\''s me'"), "got: {}", s);
+    }
+
+    #[test]
+    fn compose_remote_invocation_with_setup_script_wraps_in_bash_c() {
+        let s = compose_remote_invocation(
+            "/usr/local/bin/myagent",
+            &["chat".into()],
+            Some("hi"),
+            &fake_env(),
+            Some("source ~/venv/bin/activate"),
+        );
+        // Must include the env prefix, then `bash -c '<setup>; exec <cmd>'`
+        assert!(s.starts_with("env "));
+        assert!(s.contains("bash -c"));
+        assert!(s.contains("source ~/venv/bin/activate"));
+        assert!(s.contains("exec /usr/local/bin/myagent chat hi"));
+    }
+
+    #[test]
+    fn compose_remote_invocation_setup_script_is_quoted_safely() {
+        // A pathological setup_script with single quotes and special chars
+        // must not break out of the bash -c wrapper.
+        let s = compose_remote_invocation(
+            "/bin/true",
+            &[],
+            None,
+            &fake_env(),
+            Some("export FOO='it'\\''s'"),
+        );
+        // The full bash -c argument is single-quoted, so the inner single
+        // quotes get the POSIX `'\''` escape.  Just verify it parses without
+        // panic and that the wrapper structure is intact.
+        assert!(s.contains("bash -c"));
+        assert!(s.contains("/bin/true"));
     }
 
     // ── build_command ──────────────────────────────────────────
@@ -730,6 +862,7 @@ mod tests {
             input_mode: SubprocessInputMode::Argv,
             output_mode: SubprocessOutputMode::Raw,
             output_filter: None,
+            setup_script: None,
         };
         let driver = SubprocessDriver::new("test", config);
         let _cmd = driver.build_command(None);
@@ -752,6 +885,7 @@ mod tests {
             input_mode: SubprocessInputMode::Argv,
             output_mode: SubprocessOutputMode::Raw,
             output_filter: None,
+            setup_script: None,
         };
         let driver = SubprocessDriver::new("claude-wsl", config);
         assert_eq!(driver.driver_type(), "subprocess/wsl");
@@ -772,6 +906,7 @@ mod tests {
             input_mode: SubprocessInputMode::Argv,
             output_mode: SubprocessOutputMode::Raw,
             output_filter: None,
+            setup_script: None,
         };
         let driver = SubprocessDriver::new("hermes-spark", config);
         assert_eq!(driver.driver_type(), "subprocess/ssh");
@@ -792,6 +927,7 @@ mod tests {
             input_mode: SubprocessInputMode::Argv,
             output_mode: SubprocessOutputMode::Json,
             output_filter: Some("finalAssistantVisibleText".to_string()),
+            setup_script: None,
         };
         let driver = SubprocessDriver::new("openclaw", config);
         let raw_json = r#"{

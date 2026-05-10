@@ -14,11 +14,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod drivers;
+pub mod host_env;
 pub mod loader;
 pub mod manifest;
 pub mod runtime;
 pub mod scanner;
 
+pub use host_env::{HostEnv, HostEnvCache, HostKey};
 pub use loader::PluginLoader;
 pub use manifest::AgentManifest;
 pub use runtime::AgentRuntime;

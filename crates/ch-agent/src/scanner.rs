@@ -505,6 +505,7 @@ impl DiscoveredAgent {
                 input_mode,
                 output_mode,
                 output_filter,
+                setup_script: None,
             }),
             None,
         );

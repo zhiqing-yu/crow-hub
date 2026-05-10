@@ -186,6 +186,17 @@ pub struct SubprocessSection {
     pub output_mode: SubprocessOutputMode,
     /// Optional field to extract from JSON output (e.g. "candidates.0.text")
     pub output_filter: Option<String>,
+    /// Optional shell snippet to source/run before the agent binary, on
+    /// top of the host-env cache.  Useful when an agent needs more than
+    /// PATH — e.g. activating a Python venv, sourcing a project-specific
+    /// `.envrc`, or exporting credentials.  The script is prefixed to
+    /// the inner shell command for SSH/WSL invocations:
+    ///   `bash -c '<setup_script>; exec <cmd> <args>'`
+    /// For Native shell, the script is sourced via `bash -c` before exec.
+    /// Set this in `agent.toml`:
+    ///   `setup_script = "source ~/.envs/myenv/bin/activate"`
+    #[serde(default)]
+    pub setup_script: Option<String>,
 }
 
 /// Shell type for subprocess execution

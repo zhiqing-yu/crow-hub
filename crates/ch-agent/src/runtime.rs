@@ -4,8 +4,9 @@
 //! to the MessageBus and ModelRouter.
 
 use crate::drivers::{AgentDriver, APIDriver, SubprocessDriver, TmuxDriver};
+use crate::host_env::{HostEnvCache, HostKey};
 use crate::loader::{LoadedPlugin, PluginLoader};
-use crate::manifest::DriverType;
+use crate::manifest::{DriverType, ShellType};
 use crate::{AgentActivity, AgentError, AgentInfo, AgentState, Result};
 use ch_core::{ChannelVisibility, MessageBus};
 use ch_model::{ChatRequest, ChatStreamChunk, ModelRouter};
@@ -27,6 +28,11 @@ pub struct AgentRuntime {
     /// Wrapped in Arc so the per-agent message-handler tasks can update it
     /// without holding a reference to `self`.
     activities: Arc<DashMap<String, AgentActivity>>,
+    /// Cached interactive `$PATH` (and a few other env vars) per host.
+    /// Probed once per unique host (WSL distro / SSH user@host / native)
+    /// at agent-load time, then reused by every subprocess driver.
+    /// Persisted to `~/.crow-hub/env-cache/` for warm starts.
+    pub host_env_cache: Arc<HostEnvCache>,
     /// Model router (shared)
     router: Arc<ModelRouter>,
     /// Message bus (shared)
@@ -58,6 +64,7 @@ impl AgentRuntime {
             agents: DashMap::new(),
             agent_ids: DashMap::new(),
             activities: Arc::new(DashMap::new()),
+            host_env_cache: Arc::new(HostEnvCache::new()),
             router,
             bus,
             plugins_dir: plugins_dir.into(),
@@ -96,7 +103,28 @@ impl AgentRuntime {
                     .ok_or_else(|| AgentError::Manifest(
                         "Subprocess driver requires [subprocess] section".to_string()
                     ))?;
-                Arc::new(SubprocessDriver::new(&name, sub_config.clone()))
+
+                // Resolve the host key for this agent and probe its env (or
+                // hit the cache).  This is generic across version managers:
+                // we use whatever PATH the user's interactive shell sets up
+                // — nvm/fnm/volta/asdf/mise/etc., zero hardcoded paths.
+                //
+                // Probe runs in a blocking thread so we don't tie up the
+                // tokio runtime — typical probe takes 200-800ms cold and
+                // <1ms warm (in-memory or disk cache).
+                let host_key = derive_host_key(sub_config);
+                let cache = self.host_env_cache.clone();
+                let host_env = tokio::task::spawn_blocking(move || {
+                    cache.get_or_probe(&host_key)
+                })
+                .await
+                .map_err(|e| AgentError::Driver(format!("env probe task panicked: {}", e)))?;
+
+                Arc::new(SubprocessDriver::with_env(
+                    &name,
+                    sub_config.clone(),
+                    host_env,
+                ))
             }
             DriverType::Tmux => {
                 let tmux_config = manifest.tmux.as_ref()
@@ -417,6 +445,16 @@ impl AgentRuntime {
         info!("All agents stopped");
     }
 
+    /// Invalidate the host-env cache for a specific host (or all hosts
+    /// if `key` is `None`) and force a re-probe on the next agent that
+    /// loads onto that host.
+    pub fn refresh_host_env(&self, key: Option<&HostKey>) -> Result<()> {
+        match key {
+            Some(k) => self.host_env_cache.invalidate(k),
+            None => self.host_env_cache.invalidate_all(),
+        }
+    }
+
     /// Print a summary of loaded agents
     pub fn summary(&self) -> String {
         let mut lines = vec![format!("Agents: {} loaded", self.agent_count())];
@@ -431,6 +469,26 @@ impl AgentRuntime {
             ));
         }
         lines.join("\n")
+    }
+}
+
+/// Map a SubprocessSection to its HostKey (the cache key used for
+/// env probe deduplication).  Two agents that share a HostKey share
+/// one probe.
+pub fn derive_host_key(config: &crate::manifest::SubprocessSection) -> HostKey {
+    match config.shell {
+        ShellType::Native => HostKey::Native,
+        ShellType::Wsl => HostKey::Wsl(
+            config.wsl_distro.clone().unwrap_or_else(|| "Ubuntu".to_string()),
+        ),
+        ShellType::Ssh => {
+            let host = config.ssh_host.clone().unwrap_or_else(|| "localhost".to_string());
+            let target = match &config.ssh_user {
+                Some(u) => format!("{}@{}", u, host),
+                None => host,
+            };
+            HostKey::Ssh(target)
+        }
     }
 }
 
