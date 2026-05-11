@@ -1,0 +1,69 @@
+# ────────────────────────────────────────────────────────────────
+# Example: Codex CLI with setup_script escape hatch
+# ────────────────────────────────────────────────────────────────
+#
+# This example demonstrates the `setup_script` field — a per-agent
+# shell snippet that runs in the inner shell BEFORE the agent
+# binary is exec'd.
+#
+# When you (probably) need it:
+#   * The host-env cache captures the user's interactive PATH from
+#     `~/.bashrc`.  But on some setups (e.g. a remote host where
+#     `.bashrc` short-circuits before `brew shellenv` runs), the
+#     captured PATH is missing a directory that the agent's
+#     shebang (#!/usr/bin/env node) depends on.  Run:
+#       crow doctor <agent>
+#     and look for "exit 127: ... No such file or directory".
+#     If the missing binary lives in a known dir, prepend it via
+#     setup_script.
+#
+#   * The agent needs a Python virtualenv activated:
+#       setup_script = "source ~/.envs/myagent/bin/activate"
+#
+#   * The agent needs credentials sourced from a file:
+#       setup_script = "source ~/.config/myagent/secrets.env"
+#
+# The setup_script composes with the host-env cache — both apply.
+# The cache provides PATH; the script provides everything else.
+
+[agent]
+name = "codex-ssh-1"
+version = "1.0.0"
+description = "OpenAI Codex CLI on a remote SSH host"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = true
+
+[subprocess]
+command = "<CHANGE_ME — /home/linuxbrew/.linuxbrew/bin/codex>"
+args = ["exec", "--skip-git-repo-check", "--color", "never"]
+
+shell = "ssh"
+ssh_host = "<CHANGE_ME-host>"
+ssh_user = "<CHANGE_ME-user>"
+
+input_mode = "argv"
+output_mode = "raw"
+
+# Codex's shebang is `#!/usr/bin/env node`.  Node is installed via
+# Linuxbrew at /home/linuxbrew/.linuxbrew/bin/node — but on a host
+# whose ~/.bashrc bails for non-interactive shells before
+# `brew shellenv` runs, the host-env probe doesn't capture that
+# prefix.  Prepending it here lets `/usr/bin/env` find node.
+#
+# If your host has node in standard PATH (e.g. nvm setup that survives
+# the .bashrc guard), you don't need this — leave it commented out.
+setup_script = "export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH"
+
+[subprocess.env]
+# Codex auth.  If your host already has OPENAI_API_KEY exported in
+# the captured env, you don't need this.  Otherwise:
+# OPENAI_API_KEY = "${OPENAI_API_KEY}"
+
+[channels]
+auto_join = ["general"]

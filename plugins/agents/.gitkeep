@@ -1,0 +1,8 @@
+# This directory holds your per-machine agent manifests, written by
+# `crow setup` (or copied from examples/agents/ for custom setups).
+#
+# It is .gitignored — committed manifests would be useless to anyone
+# else (different binary paths, SSH hosts, WSL distros, etc.).
+#
+# This .gitkeep exists only so the directory is present on a fresh
+# clone, so `cargo run --bin crow -- setup` has somewhere to write.

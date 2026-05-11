@@ -1,0 +1,55 @@
+# ────────────────────────────────────────────────────────────────
+# Template: SSH subprocess agent
+# ────────────────────────────────────────────────────────────────
+#
+# Use this when the agent CLI is installed on a REMOTE machine
+# reachable via SSH.  Crow-hub invokes the agent through
+# `ssh <user>@<host> "..."` so the heavy lifting (and any GPU
+# usage) happens remotely.
+#
+# Prerequisites:
+#   * Passwordless SSH (key-based auth) — `ssh user@host` must
+#     complete without a prompt.  The driver uses BatchMode=yes.
+#   * The agent binary is installed and runnable on the remote host.
+#
+# Copy this file to `plugins/agents/<your-agent-name>/agent.toml`
+# and edit every value marked  <CHANGE_ME>.
+
+[agent]
+name = "<CHANGE_ME-agent-name>"        # must match the directory name
+version = "1.0.0"
+description = "<CHANGE_ME — one-line description>"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = true
+
+[subprocess]
+# Absolute path to the binary ON THE REMOTE HOST.  SSH in and run
+#   which <binary>
+# to find it.  Common locations same as native templates.
+command = "<CHANGE_ME — /absolute/path/on/remote>"
+
+args = []
+
+shell = "ssh"
+ssh_host = "<CHANGE_ME-hostname-or-ip>"  # e.g. "gpu-server.example.com" or "192.168.1.10"
+ssh_user = "<CHANGE_ME-remote-username>"
+# ssh_key = "C:/Users/you/.ssh/id_ed25519"  # optional — uses default if omitted
+
+input_mode = "argv"
+output_mode = "raw"
+# output_filter = "..."                 # only for output_mode = "json"
+
+# setup_script = "..."                  # rarely needed — host-env cache
+                                        # captures the remote shell's PATH
+                                        # via `crow refresh-env ssh:user@host`
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]
