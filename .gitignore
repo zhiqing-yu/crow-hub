@@ -17,6 +17,14 @@ Cargo.lock
 # Claude Code ephemeral worktrees (spawned-task scratch dirs)
 .claude/worktrees/
 
+# User-generated agent manifests (per-machine: binary paths, SSH hosts,
+# WSL distros, etc.).  Written by `crow setup` based on the user's local
+# environment, then loaded by the runtime.  Not meant to be shared via
+# git — copies of one developer's setup would be useless to anyone else.
+# See `examples/agents/` for templates you can copy + customize.
+plugins/agents/*
+!plugins/agents/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

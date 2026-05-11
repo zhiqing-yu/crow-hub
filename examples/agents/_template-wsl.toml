@@ -1,0 +1,51 @@
+# ────────────────────────────────────────────────────────────────
+# Template: WSL subprocess agent
+# ────────────────────────────────────────────────────────────────
+#
+# Use this when the agent CLI is installed inside a WSL distro
+# (Linux running inside Windows).  The driver invokes the agent
+# through `wsl.exe -d <distro> -e bash -c "..."` so the binary's
+# Linux paths are valid even though crow-hub itself runs on Windows.
+#
+# Copy this file to `plugins/agents/<your-agent-name>/agent.toml`
+# and edit every value marked  <CHANGE_ME>.
+
+[agent]
+name = "<CHANGE_ME-agent-name>"        # must match the directory name
+version = "1.0.0"
+description = "<CHANGE_ME — one-line description>"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = true
+
+[subprocess]
+# Absolute path INSIDE the WSL distro.  From a WSL shell, run:
+#   which <binary>
+# Common locations:
+#   ~/.local/bin/<binary>
+#   ~/.nvm/versions/node/<version>/bin/<binary>   (nvm-installed)
+#   ~/.npm-global/bin/<binary>                    (npm -g)
+#   /home/linuxbrew/.linuxbrew/bin/<binary>       (Linux Homebrew)
+command = "<CHANGE_ME — /home/youruser/.local/bin/binary>"
+
+args = []
+
+shell = "wsl"
+wsl_distro = "<CHANGE_ME-distro-name>"  # from `wsl -l -v`, typically "Ubuntu"
+
+input_mode = "argv"
+output_mode = "raw"
+# output_filter = "..."                 # only for output_mode = "json"
+
+# setup_script = "..."                  # rarely needed — the host-env cache
+                                        # captures ~/.bashrc's PATH automatically
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]

@@ -1,0 +1,58 @@
+# ────────────────────────────────────────────────────────────────
+# Example: OpenClaw with JSON output filtering
+# ────────────────────────────────────────────────────────────────
+#
+# OpenClaw emits structured JSON to stderr (not stdout — handled
+# by the driver) containing the assistant's text under several
+# field paths.  Setting `output_mode = "json"` plus an explicit
+# `output_filter` tells the driver where to extract the displayed
+# text from.
+#
+# Even without an explicit filter, the driver tries a fallback
+# chain (`content`, `text`, `payloads[0].text`) so OpenClaw works
+# out of the box — but specifying the filter is clearer and faster.
+#
+# The example below is for openclaw running on a WSL Ubuntu install.
+# Adapt to your install location and shell type (see _template-*.toml).
+
+[agent]
+name = "openclaw-wsl-ubuntu"
+version = "1.0.0"
+description = "OpenClaw agent (WSL Ubuntu, npm-global install)"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false
+tools = false
+vision = false
+code_execution = true
+
+[subprocess]
+# openclaw is a Node script; nvm/npm-global installs work because
+# the host-env cache captures the right PATH for non-interactive
+# shells.  No setup_script needed for a standard nvm setup.
+command = "<CHANGE_ME — /home/youruser/.npm-global/bin/openclaw>"
+args = [
+    "agent",
+    "--agent", "main",
+    "--local",
+    "--json",
+    "-m",                              # required: tells openclaw the next arg is the message
+]
+
+shell = "wsl"
+wsl_distro = "Ubuntu"
+
+input_mode = "argv"
+output_mode = "json"
+
+# Dotted path into the JSON output.  OpenClaw's actual top-level
+# shape is `{ "payloads": [ { "text": "..." }, ... ] }`, so
+# `payloads.0.text` extracts the first chunk's text.
+output_filter = "payloads.0.text"
+
+[subprocess.env]
+
+[channels]
+auto_join = ["general"]

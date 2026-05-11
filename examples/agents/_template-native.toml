@@ -1,0 +1,54 @@
+# ────────────────────────────────────────────────────────────────
+# Template: Native subprocess agent
+# ────────────────────────────────────────────────────────────────
+#
+# Use this when the agent CLI is installed on the SAME machine that
+# runs crow-hub.  Examples:
+#   * macOS:   /opt/homebrew/bin/openclaw, ~/.npm-global/bin/kimi
+#   * Linux:   ~/.local/bin/claude, /usr/local/bin/gemini
+#   * Windows: C:\Program Files\foo\foo.exe
+#
+# Copy this file to `plugins/agents/<your-agent-name>/agent.toml`
+# and edit every value marked  <CHANGE_ME>.
+
+[agent]
+name = "<CHANGE_ME-agent-name>"        # must match the directory name
+version = "1.0.0"
+description = "<CHANGE_ME — one-line description>"
+driver = "subprocess"
+
+[capabilities]
+chat = true
+streaming = false                       # set true if the CLI streams output token-by-token
+tools = false
+vision = false
+code_execution = true                   # set false for chat-only CLIs
+
+[subprocess]
+# Absolute path to the agent binary.  Use `which <binary>` to find it.
+command = "<CHANGE_ME — /absolute/path/to/binary>"
+
+# Argv that comes BEFORE the prompt.  The prompt is appended as the
+# final positional arg automatically.
+#   Empty:           args = []
+#   Subcommand:      args = ["chat"]
+#   With flags:      args = ["chat", "--quiet", "-p"]
+args = []
+
+shell = "native"
+input_mode = "argv"                     # one-shot process per message
+output_mode = "raw"                     # plain text on stdout
+# output_filter = "..."                 # only for output_mode = "json"; see openclaw example
+
+# Optional shell snippet run before the agent.  Use this when the
+# host-env cache can't capture some PATH/env the agent's shebang
+# needs.  Commented-out by default — most native agents don't need it.
+# setup_script = "source ~/.envs/venv/bin/activate"
+
+[subprocess.env]
+# Per-agent env vars to set (in addition to the cached host env).
+# Example:
+# ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
+
+[channels]
+auto_join = ["general"]
