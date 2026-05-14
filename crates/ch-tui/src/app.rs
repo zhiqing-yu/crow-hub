@@ -461,7 +461,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         })
         .collect();
 
-    let mut agents_block = Block::default().borders(Borders::ALL).title("Agents");
+    let mut agents_block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!("Agents  v{}", env!("CARGO_PKG_VERSION")));
     if app.focused_panel == FocusedPanel::Agents {
         agents_block = agents_block.border_style(Style::default().fg(Color::LightBlue));
     }
