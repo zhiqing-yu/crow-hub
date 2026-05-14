@@ -226,9 +226,9 @@ impl AgentHub {
 ```
 
 **里程碑**:
-- [ ] 消息总线实现
-- [ ] Session管理
-- [ ] 基础编排逻辑
+- [x] 消息总线实现
+- [x] Session管理
+- [x] 基础编排逻辑
 - [ ] 单元测试覆盖 >80%
 
 ---
@@ -332,12 +332,12 @@ impl AgentAdapter for ClaudeAdapter {
 ```
 
 **里程碑**:
-- [ ] Claude适配器完成
-- [ ] Kimi适配器完成
-- [ ] Gemini适配器完成
-- [ ] Hermes适配器完成
-- [ ] CodeBuddy适配器完成
-- [ ] 适配器热插拔机制
+- [x] Claude适配器完成
+- [x] Kimi适配器完成
+- [x] Gemini适配器完成
+- [x] Hermes适配器完成
+- [x] CodeBuddy适配器完成
+- [x] 适配器热插拔机制
 
 ---
 
@@ -460,11 +460,11 @@ impl MemoryStore for SqliteMemoryStore {
 ```
 
 **里程碑**:
-- [ ] MemoryStore trait定义
-- [ ] SQLite + 本地嵌入实现
+- [x] MemoryStore trait定义
+- [x] SQLite + 本地嵌入实现
 - [ ] ChromaDB适配
 - [ ] 记忆导入导出
-- [ ] 与消息总线集成
+- [x] 与消息总线集成
 
 ---
 
@@ -556,10 +556,10 @@ impl GpuMetricsCollector {
 ```
 
 **里程碑**:
-- [ ] 指标采集系统
-- [ ] Token成本计算
-- [ ] GPU性能监控（NVIDIA/Apple Silicon）
-- [ ] Prometheus导出
+- [x] 指标采集系统
+- [x] Token成本计算
+- [x] GPU性能监控（NVIDIA/Apple Silicon）
+- [x] Prometheus导出
 - [ ] HTTP API暴露指标
 
 ---
@@ -684,10 +684,10 @@ impl App {
 | `q` | 退出 |
 
 **里程碑**:
-- [ ] 基础TUI框架
-- [ ] Agent列表界面
-- [ ] 聊天界面
-- [ ] 监控面板
+- [x] 基础TUI框架
+- [x] Agent列表界面
+- [x] 聊天界面
+- [x] 监控面板
 - [ ] 记忆浏览器
 
 ---
@@ -952,10 +952,10 @@ cargo run --bin ah-gui
 ## 📋 检查清单
 
 ### 开发前准备
-- [ ] Rust环境配置
-- [ ] 跨平台编译测试
-- [ ] GitHub仓库创建
-- [ ] CI/CD配置
+- [x] Rust环境配置
+- [x] 跨平台编译测试
+- [x] GitHub仓库创建
+- [x] CI/CD配置
 
 ### 每个Phase开始
 - [ ] 设计文档Review
