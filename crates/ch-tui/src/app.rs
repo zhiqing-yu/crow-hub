@@ -1,14 +1,11 @@
 use anyhow::Result;
-use std::collections::HashSet;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use ch_agent::{AgentActivity, AgentRuntime, AgentInfo};
+use ch_agent::{AgentActivity, AgentInfo, AgentRuntime};
 use ch_core::MessageBus;
 use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload};
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
-        EnableMouseCapture, DisableMouseCapture, MouseEventKind,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyEventKind, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -21,7 +18,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::{io, time::Duration};
+use tokio::sync::mpsc;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum FocusedPanel {
@@ -83,7 +83,11 @@ impl App {
     /// Toggle the currently-cursored agent into / out of the multi-selection.
     /// Bound to Space when the Agents panel is focused.
     pub fn toggle_multi_select_current(&mut self) {
-        toggle_multi_select(&mut self.multi_selected, self.selected_agent, self.agents.len());
+        toggle_multi_select(
+            &mut self.multi_selected,
+            self.selected_agent,
+            self.agents.len(),
+        );
     }
 
     /// Clear the multi-selection.  Bound to Backspace when the Agents
@@ -138,9 +142,16 @@ pub fn run_tui_app(
     // into the input as literal `[` characters when the mouse moves.
     // Update: User specifically requested mouse scrolling, so we will enable it
     // by default, but allow disabling it via CROW_NO_MOUSE=1 for Antigravity.
-    let enable_mouse = std::env::var("CROW_NO_MOUSE").map(|v| v != "1" && v != "true").unwrap_or(true);
+    let enable_mouse = std::env::var("CROW_NO_MOUSE")
+        .map(|v| v != "1" && v != "true")
+        .unwrap_or(true);
     if enable_mouse {
-        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture
+        )?;
     } else {
         execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     }
@@ -199,26 +210,30 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                     let single_line: String = content.replace(['\n', '\r'], " ");
                     app.input.push_str(&single_line);
                 }
-                Event::Mouse(mouse_event) => {
-                    match mouse_event.kind {
-                        MouseEventKind::ScrollUp => match app.focused_panel {
-                            FocusedPanel::Input => app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1),
-                            _ => app.chat_scroll_offset = app.chat_scroll_offset.saturating_add(1),
-                        },
-                        MouseEventKind::ScrollDown => match app.focused_panel {
-                            FocusedPanel::Input => app.input_scroll_offset = app.input_scroll_offset.saturating_add(1),
-                            _ => app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(1),
-                        },
-                        _ => {}
-                    }
-                }
+                Event::Mouse(mouse_event) => match mouse_event.kind {
+                    MouseEventKind::ScrollUp => match app.focused_panel {
+                        FocusedPanel::Input => {
+                            app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1)
+                        }
+                        _ => app.chat_scroll_offset = app.chat_scroll_offset.saturating_add(1),
+                    },
+                    MouseEventKind::ScrollDown => match app.focused_panel {
+                        FocusedPanel::Input => {
+                            app.input_scroll_offset = app.input_scroll_offset.saturating_add(1)
+                        }
+                        _ => app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(1),
+                    },
+                    _ => {}
+                },
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     let now = std::time::Instant::now();
                     let is_fast = now.duration_since(last_key_time) < Duration::from_millis(20);
                     last_key_time = now;
 
                     match key.code {
-                        KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                        KeyCode::Char('c')
+                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
                             app.should_quit = true;
                         }
                         KeyCode::Esc => app.should_quit = true,
@@ -236,36 +251,32 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 FocusedPanel::Agents => FocusedPanel::Input,
                             };
                         }
-                        KeyCode::Up => {
-                            match app.focused_panel {
-                                FocusedPanel::Agents => {
-                                    if app.selected_agent > 0 {
-                                        app.selected_agent -= 1;
-                                    }
-                                }
-                                FocusedPanel::Chat => {
-                                    app.chat_scroll_offset = app.chat_scroll_offset.saturating_add(1);
-                                }
-                                FocusedPanel::Input => {
-                                    app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1);
+                        KeyCode::Up => match app.focused_panel {
+                            FocusedPanel::Agents => {
+                                if app.selected_agent > 0 {
+                                    app.selected_agent -= 1;
                                 }
                             }
-                        }
-                        KeyCode::Down => {
-                            match app.focused_panel {
-                                FocusedPanel::Agents => {
-                                    if app.selected_agent + 1 < app.agents.len() {
-                                        app.selected_agent += 1;
-                                    }
-                                }
-                                FocusedPanel::Chat => {
-                                    app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(1);
-                                }
-                                FocusedPanel::Input => {
-                                    app.input_scroll_offset = app.input_scroll_offset.saturating_add(1);
+                            FocusedPanel::Chat => {
+                                app.chat_scroll_offset = app.chat_scroll_offset.saturating_add(1);
+                            }
+                            FocusedPanel::Input => {
+                                app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1);
+                            }
+                        },
+                        KeyCode::Down => match app.focused_panel {
+                            FocusedPanel::Agents => {
+                                if app.selected_agent + 1 < app.agents.len() {
+                                    app.selected_agent += 1;
                                 }
                             }
-                        }
+                            FocusedPanel::Chat => {
+                                app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(1);
+                            }
+                            FocusedPanel::Input => {
+                                app.input_scroll_offset = app.input_scroll_offset.saturating_add(1);
+                            }
+                        },
                         KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents => {
                             // Space on Agents panel = toggle multi-select on
                             // the cursored agent.  Pressing Enter while any
@@ -464,7 +475,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     if app.focused_panel == FocusedPanel::Chat {
         messages_block = messages_block.border_style(Style::default().fg(Color::LightBlue));
     }
-        
+
     let inner_area = messages_block.inner(right_chunks[0]);
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
@@ -474,11 +485,12 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         let wrapped = wrap_text(m, width);
         all_lines.extend(wrapped);
     }
-    
+
     // Auto-scroll: take the last `height` lines, adjusted by `chat_scroll_offset`
     let max_scroll = all_lines.len().saturating_sub(height);
     let current_scroll = max_scroll.saturating_sub(app.chat_scroll_offset);
-    let visible_lines = &all_lines[current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
+    let visible_lines =
+        &all_lines[current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
 
     let messages_items: Vec<ListItem> = visible_lines
         .iter()
@@ -492,7 +504,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     f.render_widget(messages_list, right_chunks[0]);
 
     // 3. Input Panel
-    let mut input_block = Block::default().borders(Borders::ALL).title("Input (Press Tab to switch focus)");
+    let mut input_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Input (Press Tab to switch focus)");
     if app.focused_panel == FocusedPanel::Input {
         input_block = input_block.border_style(Style::default().fg(Color::LightBlue));
     }
@@ -713,7 +727,10 @@ mod tests {
         set.insert(0);
         set.insert(3);
         let targets = resolve_send_targets(&agents, &set, 1);
-        assert_eq!(targets, vec!["a".to_string(), "c".to_string(), "d".to_string()]);
+        assert_eq!(
+            targets,
+            vec!["a".to_string(), "c".to_string(), "d".to_string()]
+        );
     }
 
     #[test]
@@ -725,7 +742,7 @@ mod tests {
         let agents = vec!["a", "b", "c"];
         let mut set = HashSet::new();
         set.insert(0);
-        let targets = resolve_send_targets(&agents, &set, 2);  // cursor on "c"
+        let targets = resolve_send_targets(&agents, &set, 2); // cursor on "c"
         assert_eq!(targets, vec!["a".to_string()]);
     }
 
@@ -736,7 +753,7 @@ mod tests {
         let agents = vec!["a", "b"];
         let mut set = HashSet::new();
         set.insert(0);
-        set.insert(5);  // stale
+        set.insert(5); // stale
         let targets = resolve_send_targets(&agents, &set, 0);
         assert_eq!(targets, vec!["a".to_string()]);
     }

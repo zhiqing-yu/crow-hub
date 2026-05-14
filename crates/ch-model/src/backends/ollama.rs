@@ -3,13 +3,12 @@
 //! Uses Ollama's native /api/chat and /api/tags endpoints.
 
 use crate::{
-    BackendType, ChatMessage, ChatRequest, ChatResponse, FinishReason,
-    ModelBackend, ModelError, ModelInfo, Result, TokenUsage,
+    BackendType, ChatRequest, ChatResponse, FinishReason, ModelBackend, ModelError, ModelInfo,
+    Result, TokenUsage,
 };
 use chrono::Utc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 /// Ollama native API backend
 pub struct OllamaBackend {

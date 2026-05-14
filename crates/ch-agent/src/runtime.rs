@@ -3,7 +3,7 @@
 //! Manages the lifecycle of all loaded agents, connecting them
 //! to the MessageBus and ModelRouter.
 
-use crate::drivers::{AgentDriver, APIDriver, SubprocessDriver, TmuxDriver};
+use crate::drivers::{APIDriver, AgentDriver, SubprocessDriver, TmuxDriver};
 use crate::host_env::{HostEnvCache, HostKey};
 use crate::loader::{LoadedPlugin, PluginLoader};
 use crate::manifest::{DriverType, ShellType};
@@ -95,14 +95,13 @@ impl AgentRuntime {
 
         // Create the appropriate driver (Arc for sharing with message handler)
         let driver: Arc<dyn AgentDriver> = match manifest.agent.driver {
-            DriverType::Api => {
-                Arc::new(APIDriver::from_manifest(manifest, self.router.clone())?)
-            }
+            DriverType::Api => Arc::new(APIDriver::from_manifest(manifest, self.router.clone())?),
             DriverType::Subprocess => {
-                let sub_config = manifest.subprocess.as_ref()
-                    .ok_or_else(|| AgentError::Manifest(
-                        "Subprocess driver requires [subprocess] section".to_string()
-                    ))?;
+                let sub_config = manifest.subprocess.as_ref().ok_or_else(|| {
+                    AgentError::Manifest(
+                        "Subprocess driver requires [subprocess] section".to_string(),
+                    )
+                })?;
 
                 // Resolve the host key for this agent and probe its env (or
                 // hit the cache).  This is generic across version managers:
@@ -114,11 +113,9 @@ impl AgentRuntime {
                 // <1ms warm (in-memory or disk cache).
                 let host_key = derive_host_key(sub_config);
                 let cache = self.host_env_cache.clone();
-                let host_env = tokio::task::spawn_blocking(move || {
-                    cache.get_or_probe(&host_key)
-                })
-                .await
-                .map_err(|e| AgentError::Driver(format!("env probe task panicked: {}", e)))?;
+                let host_env = tokio::task::spawn_blocking(move || cache.get_or_probe(&host_key))
+                    .await
+                    .map_err(|e| AgentError::Driver(format!("env probe task panicked: {}", e)))?;
 
                 Arc::new(SubprocessDriver::with_env(
                     &name,
@@ -127,14 +124,15 @@ impl AgentRuntime {
                 ))
             }
             DriverType::Tmux => {
-                let tmux_config = manifest.tmux.as_ref()
-                    .ok_or_else(|| AgentError::Manifest(
-                        "Tmux driver requires [tmux] section".to_string()
-                    ))?;
+                let tmux_config = manifest.tmux.as_ref().ok_or_else(|| {
+                    AgentError::Manifest("Tmux driver requires [tmux] section".to_string())
+                })?;
                 Arc::new(TmuxDriver::new(&name, tmux_config.clone()))
             }
             DriverType::Mcp => {
-                return Err(AgentError::Driver("MCP driver not yet implemented".to_string()));
+                return Err(AgentError::Driver(
+                    "MCP driver not yet implemented".to_string(),
+                ));
             }
         };
 
@@ -154,7 +152,10 @@ impl AgentRuntime {
         if let Some(ref ch_config) = manifest.channels {
             for channel_name in &ch_config.auto_join {
                 let _ = self.bus.create_channel(channel_name);
-                if let Err(e) = self.bus.join_channel(channel_name, agent_id, ChannelVisibility::Full) {
+                if let Err(e) =
+                    self.bus
+                        .join_channel(channel_name, agent_id, ChannelVisibility::Full)
+                {
                     warn!("Agent '{}' failed to join #{}: {}", name, channel_name, e);
                 }
                 channels.push(channel_name.clone());
@@ -182,12 +183,15 @@ impl AgentRuntime {
         );
 
         self.agent_ids.insert(name.clone(), agent_id);
-        self.agents.insert(name.clone(), AgentEntry {
-            agent_id,
-            driver: driver.clone(),
-            info,
-            plugin,
-        });
+        self.agents.insert(
+            name.clone(),
+            AgentEntry {
+                agent_id,
+                driver: driver.clone(),
+                info,
+                plugin,
+            },
+        );
         self.activities.insert(name.clone(), AgentActivity::Unknown);
 
         // Spawn per-agent message handler: listens on bus, processes
@@ -273,9 +277,8 @@ impl AgentRuntime {
                                         Payload::Text(chunk.content),
                                     )
                                     .with_correlation(correlation_id);
-                                    if let Err(e) = bus
-                                        .send_to_channel(channel, &agent_id, chunk_msg)
-                                        .await
+                                    if let Err(e) =
+                                        bus.send_to_channel(channel, &agent_id, chunk_msg).await
                                     {
                                         warn!(
                                             "[{}] Failed to publish chunk to bus: {}",
@@ -294,12 +297,12 @@ impl AgentRuntime {
                                         Payload::Text(format!("Error: {}", err_str)),
                                     )
                                     .with_correlation(correlation_id);
-                                    let _ = bus
-                                        .send_to_channel(channel, &agent_id, err_msg)
-                                        .await;
+                                    let _ = bus.send_to_channel(channel, &agent_id, err_msg).await;
                                     activities.insert(
                                         agent_name.clone(),
-                                        AgentActivity::Errored { last_error: err_str },
+                                        AgentActivity::Errored {
+                                            last_error: err_str,
+                                        },
                                     );
                                     any_chunk_sent = true;
                                     errored = true;
@@ -320,9 +323,7 @@ impl AgentRuntime {
                                 Payload::Text("(no response)".to_string()),
                             )
                             .with_correlation(correlation_id);
-                            let _ = bus
-                                .send_to_channel(channel, &agent_id, empty_msg)
-                                .await;
+                            let _ = bus.send_to_channel(channel, &agent_id, empty_msg).await;
                             activities.insert(
                                 agent_name.clone(),
                                 AgentActivity::Errored {
@@ -351,7 +352,9 @@ impl AgentRuntime {
                         let _ = bus.send_to_channel(channel, &agent_id, err_msg).await;
                         activities.insert(
                             agent_name.clone(),
-                            AgentActivity::Errored { last_error: err_str },
+                            AgentActivity::Errored {
+                                last_error: err_str,
+                            },
                         );
                     }
                 }
@@ -368,7 +371,9 @@ impl AgentRuntime {
         agent_name: &str,
         request: ch_model::ChatRequest,
     ) -> Result<ch_model::ChatResponse> {
-        let entry = self.agents.get(agent_name)
+        let entry = self
+            .agents
+            .get(agent_name)
             .ok_or_else(|| AgentError::NotFound(format!("Agent '{}' not loaded", agent_name)))?;
 
         entry.driver.chat(request).await
@@ -380,7 +385,9 @@ impl AgentRuntime {
         agent_name: &str,
         request: ch_model::ChatRequest,
     ) -> Result<BoxStream<'static, Result<ChatStreamChunk>>> {
-        let entry = self.agents.get(agent_name)
+        let entry = self
+            .agents
+            .get(agent_name)
             .ok_or_else(|| AgentError::NotFound(format!("Agent '{}' not loaded", agent_name)))?;
 
         entry.driver.stream_chat(request).await
@@ -479,10 +486,16 @@ pub fn derive_host_key(config: &crate::manifest::SubprocessSection) -> HostKey {
     match config.shell {
         ShellType::Native => HostKey::Native,
         ShellType::Wsl => HostKey::Wsl(
-            config.wsl_distro.clone().unwrap_or_else(|| "Ubuntu".to_string()),
+            config
+                .wsl_distro
+                .clone()
+                .unwrap_or_else(|| "Ubuntu".to_string()),
         ),
         ShellType::Ssh => {
-            let host = config.ssh_host.clone().unwrap_or_else(|| "localhost".to_string());
+            let host = config
+                .ssh_host
+                .clone()
+                .unwrap_or_else(|| "localhost".to_string());
             let target = match &config.ssh_user {
                 Some(u) => format!("{}@{}", u, host),
                 None => host,
@@ -495,7 +508,7 @@ pub fn derive_host_key(config: &crate::manifest::SubprocessSection) -> HostKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ch_model::{ModelRegistry, backends::MockBackend, ChatRequest};
+    use ch_model::{backends::MockBackend, ChatRequest, ModelRegistry};
     use std::fs;
 
     async fn setup_test_env() -> (tempfile::TempDir, Arc<ModelRouter>, Arc<MessageBus>) {
@@ -525,7 +538,9 @@ mod tests {
         // Create plugin directory
         let agent_dir = tmp.path().join("agents").join("test-api");
         fs::create_dir_all(&agent_dir).unwrap();
-        fs::write(agent_dir.join("agent.toml"), r#"
+        fs::write(
+            agent_dir.join("agent.toml"),
+            r#"
 [agent]
 name = "test-api"
 driver = "api"
@@ -540,7 +555,9 @@ chat = true
 
 [channels]
 auto_join = ["general"]
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let runtime = AgentRuntime::new(router, bus, tmp.path());
         let loaded = runtime.load_all().await.unwrap();
@@ -559,22 +576,28 @@ auto_join = ["general"]
     async fn test_list_agents() {
         let (tmp, router, bus) = setup_test_env().await;
 
-        let mock = MockBackend::new("b1")
-            .with_models(vec!["m1".to_string()]);
+        let mock = MockBackend::new("b1").with_models(vec!["m1".to_string()]);
         router.register_backend(Arc::new(mock)).await.unwrap();
 
         // Create two agents
         for name in &["agent-a", "agent-b"] {
             let dir = tmp.path().join("agents").join(name);
             fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("agent.toml"), format!(r#"
+            fs::write(
+                dir.join("agent.toml"),
+                format!(
+                    r#"
 [agent]
 name = "{}"
 driver = "api"
 description = "Test"
 [model]
 default = "m1"
-"#, name)).unwrap();
+"#,
+                    name
+                ),
+            )
+            .unwrap();
         }
 
         let runtime = AgentRuntime::new(router, bus, tmp.path());
@@ -588,7 +611,9 @@ default = "m1"
     async fn test_agent_not_found() {
         let (_tmp, router, bus) = setup_test_env().await;
         let runtime = AgentRuntime::new(router, bus, PathBuf::from("."));
-        let result = runtime.chat("nonexistent", ChatRequest::simple("m", "hi")).await;
+        let result = runtime
+            .chat("nonexistent", ChatRequest::simple("m", "hi"))
+            .await;
         assert!(result.is_err());
     }
 }

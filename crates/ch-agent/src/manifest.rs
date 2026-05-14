@@ -3,10 +3,10 @@
 //! Defines the TOML manifest format for agent plugins.
 //! Each agent lives in `plugins/agents/<name>/agent.toml`.
 
+use crate::{AgentError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use crate::{AgentError, Result};
 
 /// Top-level agent manifest (parsed from agent.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,8 +313,14 @@ auto_join = ["general"]
         assert_eq!(manifest.agent.driver, DriverType::Api);
         assert!(manifest.capabilities.chat);
         assert!(manifest.capabilities.streaming);
-        assert_eq!(manifest.model.as_ref().unwrap().default, "claude-sonnet-4-6");
-        assert_eq!(manifest.channels.as_ref().unwrap().auto_join, vec!["general"]);
+        assert_eq!(
+            manifest.model.as_ref().unwrap().default,
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            manifest.channels.as_ref().unwrap().auto_join,
+            vec!["general"]
+        );
     }
 
     #[test]

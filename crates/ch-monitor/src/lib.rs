@@ -3,13 +3,13 @@
 //! Provides comprehensive monitoring and metrics collection
 //! for agents, including token usage, performance, and resource metrics.
 
-use ch_protocol::{TokenMetrics, PerformanceMetrics, ResourceMetrics};
+use ch_protocol::{PerformanceMetrics, ResourceMetrics, TokenMetrics};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::info;
 
 pub mod collectors;
 pub mod exporters;
@@ -19,13 +19,13 @@ pub mod exporters;
 pub enum MonitorError {
     #[error("Collection error: {0}")]
     Collection(String),
-    
+
     #[error("Export error: {0}")]
     Export(String),
-    
+
     #[error("Storage error: {0}")]
     Storage(String),
-    
+
     #[error("Agent not found: {0}")]
     AgentNotFound(String),
 }
@@ -130,28 +130,34 @@ impl AgentMetricsHistory {
             max_size,
         }
     }
-    
+
     fn add(&self, metrics: AgentMetrics) {
         let mut entries = self.entries.write();
         entries.push(HistoricalEntry {
             timestamp: metrics.timestamp,
             metrics,
         });
-        
+
         // Trim old entries
         if entries.len() > self.max_size {
             entries.remove(0);
         }
     }
-    
+
     fn get_recent(&self, count: usize) -> Vec<AgentMetrics> {
         let entries = self.entries.read();
-        entries.iter().rev().take(count).map(|e| e.metrics.clone()).collect()
+        entries
+            .iter()
+            .rev()
+            .take(count)
+            .map(|e| e.metrics.clone())
+            .collect()
     }
-    
+
     fn get_range(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<AgentMetrics> {
         let entries = self.entries.read();
-        entries.iter()
+        entries
+            .iter()
             .filter(|e| e.timestamp >= start && e.timestamp <= end)
             .map(|e| e.metrics.clone())
             .collect()
@@ -176,30 +182,33 @@ impl Monitor {
             running: RwLock::new(false),
         }
     }
-    
+
     /// Start the monitor
     pub async fn start(&self) -> Result<()> {
         let mut running = self.running.write();
         *running = true;
-        
-        info!("Monitor started with {}s export interval", self.config.export_interval_seconds);
+
+        info!(
+            "Monitor started with {}s export interval",
+            self.config.export_interval_seconds
+        );
         Ok(())
     }
-    
+
     /// Stop the monitor
     pub async fn stop(&self) -> Result<()> {
         let mut running = self.running.write();
         *running = false;
-        
+
         info!("Monitor stopped");
         Ok(())
     }
-    
+
     /// Check if monitor is running
     pub fn is_running(&self) -> bool {
         *self.running.read()
     }
-    
+
     /// Record token usage
     pub async fn record_tokens(
         &self,
@@ -210,12 +219,14 @@ impl Monitor {
         output_tokens: u64,
     ) -> Result<()> {
         let total_tokens = input_tokens + output_tokens;
-        
+
         // Calculate cost
-        let input_cost = (input_tokens as f64 / 1000.0) * self.config.cost_config.input_price_per_1k;
-        let output_cost = (output_tokens as f64 / 1000.0) * self.config.cost_config.output_price_per_1k;
+        let input_cost =
+            (input_tokens as f64 / 1000.0) * self.config.cost_config.input_price_per_1k;
+        let output_cost =
+            (output_tokens as f64 / 1000.0) * self.config.cost_config.output_price_per_1k;
         let total_cost = input_cost + output_cost;
-        
+
         let metrics = AgentMetrics {
             agent_id: agent_id.to_string(),
             agent_name: agent_name.to_string(),
@@ -245,11 +256,11 @@ impl Monitor {
             errors_total: 0,
             latency_avg_ms: 0.0,
         };
-        
+
         self.update_metrics(agent_id.to_string(), metrics);
         Ok(())
     }
-    
+
     /// Record performance metrics
     pub async fn record_performance(
         &self,
@@ -269,7 +280,7 @@ impl Monitor {
         }
         Ok(())
     }
-    
+
     /// Record resource metrics
     pub async fn record_resources(
         &self,
@@ -290,7 +301,7 @@ impl Monitor {
         }
         Ok(())
     }
-    
+
     /// Record request completion
     pub async fn record_request(
         &self,
@@ -303,37 +314,41 @@ impl Monitor {
             if !success {
                 metrics.errors_total += 1;
             }
-            
+
             // Update average latency using exponential moving average
             let alpha = 0.3;
             metrics.latency_avg_ms = alpha * latency_ms + (1.0 - alpha) * metrics.latency_avg_ms;
         }
         Ok(())
     }
-    
+
     /// Get current metrics for an agent
     pub fn get_agent_metrics(&self, agent_id: &str) -> Option<AgentMetrics> {
         self.current_metrics.get(agent_id).map(|m| m.clone())
     }
-    
+
     /// Get all current metrics
     pub fn get_all_metrics(&self) -> Vec<AgentMetrics> {
         self.current_metrics.iter().map(|m| m.clone()).collect()
     }
-    
+
     /// Get metrics snapshot
     pub fn get_snapshot(&self) -> MetricsSnapshot {
         let agents = self.get_all_metrics();
-        
+
         let total_tokens: u64 = agents.iter().map(|a| a.tokens.total_tokens).sum();
         let total_cost: f64 = agents.iter().map(|a| a.tokens.cost_usd).sum();
-        
+
         MetricsSnapshot {
             timestamp: Utc::now(),
             agents,
             system: SystemMetrics {
                 total_agents: self.current_metrics.len(),
-                active_agents: self.current_metrics.iter().filter(|a| a.requests_total > 0).count(),
+                active_agents: self
+                    .current_metrics
+                    .iter()
+                    .filter(|a| a.requests_total > 0)
+                    .count(),
                 total_tokens,
                 total_cost_usd: total_cost,
                 requests_per_second: 0.0, // Would need to calculate from history
@@ -342,31 +357,33 @@ impl Monitor {
             },
         }
     }
-    
+
     /// Get historical metrics for an agent
     pub fn get_agent_history(&self, agent_id: &str, count: usize) -> Vec<AgentMetrics> {
-        self.history.get(agent_id)
+        self.history
+            .get(agent_id)
             .map(|h| h.get_recent(count))
             .unwrap_or_default()
     }
-    
+
     /// Remove an agent's metrics
     pub fn remove_agent(&self, agent_id: &str) {
         self.current_metrics.remove(agent_id);
         self.history.remove(agent_id);
     }
-    
+
     /// Update metrics and history
     fn update_metrics(&self, agent_id: String, metrics: AgentMetrics) {
         // Ensure history exists
-        self.history.entry(agent_id.clone())
+        self.history
+            .entry(agent_id.clone())
             .or_insert_with(|| AgentMetricsHistory::new(1000));
-        
+
         // Add to history
         if let Some(history) = self.history.get(&agent_id) {
             history.add(metrics.clone());
         }
-        
+
         // Update current
         self.current_metrics.insert(agent_id, metrics);
     }
@@ -383,7 +400,7 @@ impl Default for Monitor {
 pub trait MetricsExporter: Send + Sync {
     /// Export metrics
     async fn export(&self, snapshot: &MetricsSnapshot) -> Result<()>;
-    
+
     /// Get exporter name
     fn name(&self) -> &str;
 }
@@ -395,15 +412,12 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_tokens() {
         let monitor = Monitor::new(MonitorConfig::default());
-        
-        monitor.record_tokens(
-            "agent-1",
-            "Test Agent",
-            "claude",
-            1000,
-            500,
-        ).await.unwrap();
-        
+
+        monitor
+            .record_tokens("agent-1", "Test Agent", "claude", 1000, 500)
+            .await
+            .unwrap();
+
         let metrics = monitor.get_agent_metrics("agent-1").unwrap();
         assert_eq!(metrics.tokens.input_tokens, 1000);
         assert_eq!(metrics.tokens.output_tokens, 500);
@@ -413,10 +427,16 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_snapshot() {
         let monitor = Monitor::new(MonitorConfig::default());
-        
-        monitor.record_tokens("agent-1", "Agent 1", "claude", 1000, 500).await.unwrap();
-        monitor.record_tokens("agent-2", "Agent 2", "kimi", 2000, 1000).await.unwrap();
-        
+
+        monitor
+            .record_tokens("agent-1", "Agent 1", "claude", 1000, 500)
+            .await
+            .unwrap();
+        monitor
+            .record_tokens("agent-2", "Agent 2", "kimi", 2000, 1000)
+            .await
+            .unwrap();
+
         let snapshot = monitor.get_snapshot();
         assert_eq!(snapshot.agents.len(), 2);
         assert_eq!(snapshot.system.total_agents, 2);

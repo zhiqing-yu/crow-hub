@@ -1,7 +1,7 @@
 //! Metrics exporters
 
-pub mod prometheus;
 pub mod console;
+pub mod prometheus;
 
 use crate::{MetricsSnapshot, Result};
 
@@ -10,7 +10,7 @@ use crate::{MetricsSnapshot, Result};
 pub trait Exporter: Send + Sync {
     /// Export metrics snapshot
     async fn export(&self, snapshot: &MetricsSnapshot) -> Result<()>;
-    
+
     /// Get exporter name
     fn name(&self) -> &str;
 }

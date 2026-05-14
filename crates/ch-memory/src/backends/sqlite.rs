@@ -1,12 +1,16 @@
-use ch_protocol::MemoryEntry;
-use crate::{MemoryStore, MemoryFilter, ExportFormat, ImportResult, SqliteConfig, Result, MemoryError};
+use crate::{
+    ExportFormat, ImportResult, MemoryError, MemoryFilter, MemoryStore, Result, SqliteConfig,
+};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool, Row};
-use std::str::FromStr;
 use ch_protocol::AgentId;
+use ch_protocol::MemoryEntry;
+use chrono::DateTime;
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    Row, SqlitePool,
+};
+use std::str::FromStr;
 use uuid::Uuid;
-use std::collections::HashMap;
 
 pub struct SqliteMemoryStore {
     config: SqliteConfig,
@@ -47,7 +51,7 @@ impl SqliteMemoryStore {
         let metadata = metadata_str
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        
+
         let agent_id_str: String = row.try_get("from_agent").unwrap_or_default();
         let agent_id = AgentId(Uuid::parse_str(&agent_id_str).unwrap_or_else(|_| Uuid::new_v4()));
 
@@ -66,13 +70,13 @@ impl SqliteMemoryStore {
             updated_at: timestamp,
         })
     }
-    
+
     /// Calculate cosine similarity between two vectors
     fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm_a == 0.0 || norm_b == 0.0 {
             0.0
         } else {
@@ -109,7 +113,10 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn write(&self, memory: MemoryEntry) -> Result<String> {
-        let correlation_id = memory.metadata.get("correlation_id").and_then(|v| v.as_str());
+        let correlation_id = memory
+            .metadata
+            .get("correlation_id")
+            .and_then(|v| v.as_str());
         let to_agent = memory.metadata.get("to_agent").and_then(|v| v.as_str());
         let channel = &memory.session_id;
         let metadata_str = serde_json::to_string(&memory.metadata).unwrap_or_default();
@@ -149,43 +156,57 @@ impl MemoryStore for SqliteMemoryStore {
         }
     }
 
-    async fn search(&self, _query: &str, _filter: MemoryFilter, _top_k: usize) -> Result<Vec<MemoryEntry>> {
+    async fn search(
+        &self,
+        _query: &str,
+        _filter: MemoryFilter,
+        _top_k: usize,
+    ) -> Result<Vec<MemoryEntry>> {
         // No embeddings yet
         Ok(Vec::new())
     }
 
-    async fn get_session_context(&self, session_id: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+    async fn get_session_context(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>> {
         self.recent(session_id, limit).await
     }
 
     async fn get_agent_memories(&self, agent_id: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        let rows = sqlx::query("SELECT * FROM messages WHERE from_agent = ? ORDER BY created_at DESC LIMIT ?")
-            .bind(agent_id)
-            .bind(limit as i64)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| MemoryError::Backend(e.to_string()))?;
+        let rows = sqlx::query(
+            "SELECT * FROM messages WHERE from_agent = ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(agent_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
         rows.into_iter().map(Self::row_to_memory).collect()
     }
 
     async fn recent(&self, channel: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        let rows = sqlx::query("SELECT * FROM messages WHERE channel = ? ORDER BY created_at DESC LIMIT ?")
-            .bind(channel)
-            .bind(limit as i64)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| MemoryError::Backend(e.to_string()))?;
+        let rows = sqlx::query(
+            "SELECT * FROM messages WHERE channel = ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(channel)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
         rows.into_iter().map(Self::row_to_memory).collect()
     }
 
     async fn by_correlation(&self, id: &str) -> Result<Vec<MemoryEntry>> {
-        let rows = sqlx::query("SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC")
-            .bind(id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| MemoryError::Backend(e.to_string()))?;
+        let rows =
+            sqlx::query("SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC")
+                .bind(id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
         rows.into_iter().map(Self::row_to_memory).collect()
     }
@@ -255,6 +276,7 @@ impl MemoryStore for SqliteMemoryStore {
 mod tests {
     use super::*;
     use ch_protocol::AgentId;
+    use chrono::Utc;
 
     #[tokio::test]
     async fn test_sqlite_store() {
@@ -263,7 +285,7 @@ mod tests {
             embedding_dim: 768,
         };
         let store = SqliteMemoryStore::new(config).await.unwrap();
-        
+
         // Test write
         let memory = MemoryEntry {
             memory_id: "test-1".to_string(),
@@ -276,23 +298,23 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        
+
         let id = store.write(memory.clone()).await.unwrap();
         assert_eq!(id, memory.memory_id);
-        
+
         // Test read
         let retrieved = store.read(&id).await.unwrap();
         assert_eq!(retrieved.content, memory.content);
-        
+
         // Test count
         let count = store.count().await.unwrap();
         assert_eq!(count, 1);
-        
+
         // Test recent
         let recent = store.recent("session-1", 10).await.unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].content, memory.content);
-        
+
         // Test empty recent
         let empty_recent = store.recent("session-2", 10).await.unwrap();
         assert_eq!(empty_recent.len(), 0);
@@ -303,7 +325,7 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![1.0, 0.0, 0.0];
         assert!((SqliteMemoryStore::cosine_similarity(&a, &b) - 1.0).abs() < 0.001);
-        
+
         let c = vec![0.0, 1.0, 0.0];
         assert!(SqliteMemoryStore::cosine_similarity(&a, &c).abs() < 0.001);
     }

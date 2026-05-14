@@ -5,8 +5,8 @@
 
 use crate::manifest::AgentManifest;
 use crate::{AgentError, Result};
-use std::path::{Path, PathBuf};
-use tracing::{info, warn, debug};
+use std::path::PathBuf;
+use tracing::{debug, info, warn};
 
 /// Scans plugin directories and loads agent manifests
 pub struct PluginLoader {
@@ -27,15 +27,17 @@ impl PluginLoader {
         let agents_dir = self.plugins_dir.join("agents");
 
         if !agents_dir.exists() {
-            info!("No plugins/agents directory found at {:?}, creating it", agents_dir);
+            info!(
+                "No plugins/agents directory found at {:?}, creating it",
+                agents_dir
+            );
             std::fs::create_dir_all(&agents_dir)?;
             return Ok(Vec::new());
         }
 
         let mut plugins = Vec::new();
 
-        let entries = std::fs::read_dir(&agents_dir)
-            .map_err(|e| AgentError::Io(e))?;
+        let entries = std::fs::read_dir(&agents_dir).map_err(|e| AgentError::Io(e))?;
 
         for entry in entries {
             let entry = entry?;
@@ -80,7 +82,8 @@ impl PluginLoader {
 
         if !manifest_path.exists() {
             return Err(AgentError::NotFound(format!(
-                "No agent.toml at {:?}", manifest_path
+                "No agent.toml at {:?}",
+                manifest_path
             )));
         }
 
@@ -159,13 +162,17 @@ chat = true
         // Good plugin
         let good = agents_dir.join("good");
         fs::create_dir_all(&good).unwrap();
-        fs::write(good.join("agent.toml"), r#"
+        fs::write(
+            good.join("agent.toml"),
+            r#"
 [agent]
 name = "good"
 driver = "api"
 [model]
 default = "gpt-4"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         // Bad plugin (missing required fields)
         let bad = agents_dir.join("bad");
@@ -183,13 +190,17 @@ default = "gpt-4"
         let tmp = tempfile::tempdir().unwrap();
         let agents_dir = tmp.path().join("agents").join("test-agent");
         fs::create_dir_all(&agents_dir).unwrap();
-        fs::write(agents_dir.join("agent.toml"), r#"
+        fs::write(
+            agents_dir.join("agent.toml"),
+            r#"
 [agent]
 name = "test-agent"
 driver = "api"
 [model]
 default = "llama3"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let loader = PluginLoader::new(tmp.path());
         let plugin = loader.load_single("test-agent").unwrap();

@@ -3,13 +3,12 @@
 //! Handles the Anthropic-specific API format.
 
 use crate::{
-    BackendType, ChatMessage, ChatRequest, ChatResponse, ChatRole, FinishReason,
-    ModelBackend, ModelError, ModelInfo, Result, TokenUsage,
+    BackendType, ChatRequest, ChatResponse, ChatRole, FinishReason, ModelBackend, ModelError,
+    ModelInfo, Result, TokenUsage,
 };
 use chrono::Utc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 /// Anthropic API backend
 pub struct AnthropicBackend {
@@ -23,10 +22,7 @@ pub struct AnthropicBackend {
 
 impl AnthropicBackend {
     /// Create a new Anthropic backend
-    pub fn new(
-        name: impl Into<String>,
-        api_key: impl Into<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             base_url: "https://api.anthropic.com".to_string(),

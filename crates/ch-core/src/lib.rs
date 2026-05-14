@@ -43,22 +43,22 @@ pub fn get_plugins_dir() -> PathBuf {
 pub enum CoreError {
     #[error("Configuration error: {0}")]
     Config(String),
-    
+
     #[error("Registry error: {0}")]
     Registry(String),
-    
+
     #[error("Session error: {0}")]
     Session(String),
-    
+
     #[error("Bus error: {0}")]
     Bus(String),
-    
+
     #[error("Orchestration error: {0}")]
     Orchestration(String),
-    
+
     #[error("Channel error: {0}")]
     Channel(String),
-    
+
     #[error("IO error: {0}")]
     Io(String),
 }
@@ -81,7 +81,7 @@ impl CrowHub {
     /// Create a new Crow Hub instance
     pub async fn new(config: HubConfig) -> Result<Self> {
         let config = Arc::new(config);
-        
+
         // Initialize components
         let bus = Arc::new(MessageBus::new());
         let registry = Arc::new(AgentRegistry::new());
@@ -91,7 +91,7 @@ impl CrowHub {
             registry.clone(),
             sessions.clone(),
         ));
-        
+
         Ok(Self {
             config,
             bus,
@@ -100,28 +100,28 @@ impl CrowHub {
             orchestrator,
         })
     }
-    
+
     /// Start the hub
     pub async fn start(&self) -> Result<()> {
         tracing::info!("Starting Crow Hub v{}", env!("CARGO_PKG_VERSION"));
-        
+
         // Start message bus
         self.bus.start().await?;
-        
+
         // Start orchestrator
         self.orchestrator.start().await?;
-        
+
         tracing::info!("Crow Hub started successfully");
         Ok(())
     }
-    
+
     /// Shutdown the hub
     pub async fn shutdown(&self) -> Result<()> {
         tracing::info!("Shutting down Crow Hub");
-        
+
         self.orchestrator.shutdown().await?;
         self.bus.shutdown().await?;
-        
+
         tracing::info!("Crow Hub shutdown complete");
         Ok(())
     }
@@ -137,7 +137,11 @@ pub fn build_info() -> BuildInfo {
     BuildInfo {
         version: version(),
         target: option_env!("TARGET").unwrap_or("unknown"),
-        profile: if cfg!(debug_assertions) { "debug" } else { "release" },
+        profile: if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
         rustc: option_env!("RUSTC_VERSION").unwrap_or("unknown"),
     }
 }
@@ -154,12 +158,12 @@ pub struct BuildInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_version() {
         assert!(!version().is_empty());
     }
-    
+
     #[test]
     fn test_build_info() {
         let info = build_info();

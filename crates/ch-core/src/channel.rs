@@ -7,7 +7,6 @@ use ch_protocol::AgentId;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 
 /// Visibility level for an agent in a channel
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

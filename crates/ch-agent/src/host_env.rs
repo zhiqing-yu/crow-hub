@@ -83,7 +83,13 @@ impl HostKey {
 /// Keeps cache filenames safe across Windows / Linux / macOS.
 fn sanitize(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -103,7 +109,9 @@ pub struct HostEnv {
 
 impl HostEnv {
     pub fn new() -> Self {
-        Self { vars: HashMap::new() }
+        Self {
+            vars: HashMap::new(),
+        }
     }
 
     /// Returns the captured `$PATH`, or an empty string if not present.
@@ -130,18 +138,35 @@ const ENV_ALLOWLIST: &[&str] = &[
     "PATH",
     "HOME",
     "USER",
-    "LANG", "LC_ALL", "LC_CTYPE",
-    "NVM_DIR", "NVM_BIN", "NVM_INC", "NODE_PATH", "NODE_VERSION",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "NVM_DIR",
+    "NVM_BIN",
+    "NVM_INC",
+    "NODE_PATH",
+    "NODE_VERSION",
     "VOLTA_HOME",
-    "ASDF_DATA_DIR", "ASDF_CONFIG_FILE", "ASDF_DIR",
-    "MISE_DATA_DIR", "RTX_DATA_DIR",
-    "PYENV_ROOT", "PYENV_VERSION",
-    "RBENV_ROOT", "RBENV_VERSION",
-    "GOPATH", "GOROOT",
-    "CARGO_HOME", "RUSTUP_HOME",
-    "HOMEBREW_PREFIX", "HOMEBREW_CELLAR", "HOMEBREW_REPOSITORY",
-    "DENO_INSTALL", "BUN_INSTALL",
-    "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+    "ASDF_DATA_DIR",
+    "ASDF_CONFIG_FILE",
+    "ASDF_DIR",
+    "MISE_DATA_DIR",
+    "RTX_DATA_DIR",
+    "PYENV_ROOT",
+    "PYENV_VERSION",
+    "RBENV_ROOT",
+    "RBENV_VERSION",
+    "GOPATH",
+    "GOROOT",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "HOMEBREW_PREFIX",
+    "HOMEBREW_CELLAR",
+    "HOMEBREW_REPOSITORY",
+    "DENO_INSTALL",
+    "BUN_INSTALL",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
 ];
 
 fn is_allowed(name: &str) -> bool {
@@ -203,14 +228,22 @@ impl HostEnvCache {
         let env = match probe(key) {
             Ok(env) => env,
             Err(e) => {
-                warn!("[host_env] probe failed for {}: {} — falling back to empty env", key.label(), e);
+                warn!(
+                    "[host_env] probe failed for {}: {} — falling back to empty env",
+                    key.label(),
+                    e
+                );
                 HostEnv::new()
             }
         };
 
         // Persist
         if let Err(e) = save_cache_file(&path, &env) {
-            warn!("[host_env] failed to persist cache for {}: {}", key.label(), e);
+            warn!(
+                "[host_env] failed to persist cache for {}: {}",
+                key.label(),
+                e
+            );
         }
         self.in_memory.insert(key.clone(), env.clone());
 
@@ -223,8 +256,9 @@ impl HostEnvCache {
         self.in_memory.remove(key);
         let path = self.cache_dir.join(key.cache_filename());
         if path.exists() {
-            std::fs::remove_file(&path)
-                .map_err(|e| AgentError::Driver(format!("failed to remove {}: {}", path.display(), e)))?;
+            std::fs::remove_file(&path).map_err(|e| {
+                AgentError::Driver(format!("failed to remove {}: {}", path.display(), e))
+            })?;
         }
         info!("[host_env] invalidated cache for {}", key.label());
         Ok(())
@@ -317,11 +351,7 @@ fn probe_native() -> Result<HostEnv> {
 
 fn probe_wsl(distro: &str) -> Result<HostEnv> {
     let output = Command::new("wsl.exe")
-        .args([
-            "-d", distro,
-            "--", "bash", "-lc",
-            PROBE_INIT_SCRIPT,
-        ])
+        .args(["-d", distro, "--", "bash", "-lc", PROBE_INIT_SCRIPT])
         .output()
         .map_err(|e| AgentError::Driver(format!("wsl probe spawn failed: {}", e)))?;
 
@@ -330,7 +360,11 @@ fn probe_wsl(distro: &str) -> Result<HostEnv> {
         return Err(AgentError::Driver(format!(
             "wsl probe for {} exited {}: {}",
             distro,
-            output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".to_string()),
+            output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".to_string()),
             stderr.trim()
         )));
     }
@@ -342,9 +376,12 @@ fn probe_wsl(distro: &str) -> Result<HostEnv> {
 fn probe_ssh(target: &str) -> Result<HostEnv> {
     let output = Command::new("ssh")
         .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=accept-new",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
             target,
             PROBE_INIT_SCRIPT,
         ])
@@ -356,7 +393,11 @@ fn probe_ssh(target: &str) -> Result<HostEnv> {
         return Err(AgentError::Driver(format!(
             "ssh probe for {} exited {}: {}",
             target,
-            output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".to_string()),
+            output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".to_string()),
             stderr.trim()
         )));
     }
@@ -372,11 +413,18 @@ pub(crate) fn parse_env_output(output: &str) -> HostEnv {
     for line in output.lines() {
         let line = line.trim_end_matches('\r');
         // Skip lines without `=` (rare, e.g. shell prompt echoes from .bashrc).
-        let Some(eq_pos) = line.find('=') else { continue };
+        let Some(eq_pos) = line.find('=') else {
+            continue;
+        };
         let key = &line[..eq_pos];
         let value = &line[eq_pos + 1..];
         // Skip lines where the key isn't a valid env-var name (e.g. function definitions).
-        if key.is_empty() || !key.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+        if key.is_empty()
+            || !key
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
             continue;
         }
         if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -406,7 +454,10 @@ fn save_cache_file(path: &std::path::Path, env: &HostEnv) -> std::io::Result<()>
     let mut f = std::fs::File::create(path)?;
     writeln!(f, "# crow-hub host env cache")?;
     writeln!(f, "# Generated: {}", chrono::Utc::now().to_rfc3339())?;
-    writeln!(f, "# To refresh, delete this file (or run `crow refresh-env`).")?;
+    writeln!(
+        f,
+        "# To refresh, delete this file (or run `crow refresh-env`)."
+    )?;
     writeln!(f)?;
     for (k, v) in env.iter_sorted() {
         writeln!(f, "{}={}", k, v)?;
@@ -422,7 +473,9 @@ fn parse_cache_file(content: &str) -> Option<HostEnv> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some(eq_pos) = line.find('=') else { continue };
+        let Some(eq_pos) = line.find('=') else {
+            continue;
+        };
         let key = &line[..eq_pos];
         let value = &line[eq_pos + 1..];
         if !is_allowed(key) {
@@ -431,7 +484,11 @@ fn parse_cache_file(content: &str) -> Option<HostEnv> {
         env.vars.insert(key.to_string(), value.to_string());
         found_any = true;
     }
-    if found_any { Some(env) } else { None }
+    if found_any {
+        Some(env)
+    } else {
+        None
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────
@@ -443,7 +500,10 @@ mod tests {
     #[test]
     fn host_key_cache_filenames_are_safe() {
         assert_eq!(HostKey::Native.cache_filename(), "native.env");
-        assert_eq!(HostKey::Wsl("Ubuntu".into()).cache_filename(), "wsl-Ubuntu.env");
+        assert_eq!(
+            HostKey::Wsl("Ubuntu".into()).cache_filename(),
+            "wsl-Ubuntu.env"
+        );
         assert_eq!(
             HostKey::Ssh("zhiqing@192.168.50.1".into()).cache_filename(),
             "ssh-zhiqing_192.168.50.1.env"

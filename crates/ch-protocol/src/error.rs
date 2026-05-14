@@ -10,31 +10,31 @@ pub type Result<T> = std::result::Result<T, ProtocolError>;
 pub enum ProtocolError {
     #[error("Serialization error: {0}")]
     Serialization(String),
-    
+
     #[error("Deserialization error: {0}")]
     Deserialization(String),
-    
+
     #[error("Invalid message format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("Message expired: {message_id}")]
     MessageExpired { message_id: String },
-    
+
     #[error("Unknown message type: {0}")]
     UnknownMessageType(String),
-    
+
     #[error("Routing error: {0}")]
     RoutingError(String),
-    
+
     #[error("Agent not found: {0}")]
     AgentNotFound(String),
-    
+
     #[error("Timeout after {duration}s")]
     Timeout { duration: u64 },
-    
+
     #[error("Invalid state: {0}")]
     InvalidState(String),
-    
+
     #[error("Version mismatch: expected {expected}, got {actual}")]
     VersionMismatch { expected: String, actual: String },
 }

@@ -3,13 +3,12 @@
 //! Works with vLLM, LM Studio, Ollama's /v1 endpoint, and any OpenAI-compatible server.
 
 use crate::{
-    BackendType, ChatMessage, ChatRequest, ChatResponse, FinishReason,
-    ModelBackend, ModelError, ModelInfo, Result, TokenUsage,
+    BackendType, ChatRequest, ChatResponse, FinishReason, ModelBackend, ModelError, ModelInfo,
+    Result, TokenUsage,
 };
 use chrono::Utc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 /// Backend for OpenAI-compatible APIs
 pub struct OpenAICompatBackend {
@@ -91,8 +90,16 @@ impl ModelBackend for OpenAICompatBackend {
             model: api_resp.model,
             backend: self.name.clone(),
             usage: TokenUsage {
-                input_tokens: api_resp.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0),
-                output_tokens: api_resp.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
+                input_tokens: api_resp
+                    .usage
+                    .as_ref()
+                    .map(|u| u.prompt_tokens)
+                    .unwrap_or(0),
+                output_tokens: api_resp
+                    .usage
+                    .as_ref()
+                    .map(|u| u.completion_tokens)
+                    .unwrap_or(0),
                 total_tokens: api_resp.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0),
             },
             finish_reason: match choice.finish_reason.as_deref() {

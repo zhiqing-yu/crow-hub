@@ -4,10 +4,10 @@
 
 use ch_protocol::{AgentAddress, AgentId, AgentStatus, Capability};
 use dashmap::DashMap;
-use tracing::{debug, info};
+use tracing::info;
 
-use crate::Result;
 use crate::CoreError;
+use crate::Result;
 
 /// Registered agent information
 #[derive(Debug, Clone)]
@@ -36,7 +36,7 @@ impl AgentRegistry {
             name_index: DashMap::new(),
         }
     }
-    
+
     /// Register a new agent
     pub async fn register(
         &self,
@@ -45,14 +45,15 @@ impl AgentRegistry {
         metadata: std::collections::HashMap<String, String>,
     ) -> Result<AgentId> {
         let agent_id = address.agent_id;
-        
+
         // Check if name already exists
         if self.name_index.contains_key(&address.agent_name) {
-            return Err(CoreError::Registry(
-                format!("Agent with name '{}' already exists", address.agent_name)
-            ));
+            return Err(CoreError::Registry(format!(
+                "Agent with name '{}' already exists",
+                address.agent_name
+            )));
         }
-        
+
         let now = chrono::Utc::now();
         let agent = RegisteredAgent {
             address: address.clone(),
@@ -72,14 +73,17 @@ impl AgentRegistry {
             registered_at: now,
             last_heartbeat: now,
         };
-        
+
         self.agents.insert(agent_id, agent);
         self.name_index.insert(address.agent_name.clone(), agent_id);
-        
-        info!("Agent '{}' registered with ID {}", address.agent_name, agent_id);
+
+        info!(
+            "Agent '{}' registered with ID {}",
+            address.agent_name, agent_id
+        );
         Ok(agent_id)
     }
-    
+
     /// Unregister an agent
     pub fn unregister(&self, agent_id: &AgentId) -> Result<()> {
         if let Some((_, agent)) = self.agents.remove(agent_id) {
@@ -88,19 +92,17 @@ impl AgentRegistry {
         }
         Ok(())
     }
-    
+
     /// Get agent by ID
     pub fn get(&self, agent_id: &AgentId) -> Option<RegisteredAgent> {
         self.agents.get(agent_id).map(|a| a.clone())
     }
-    
+
     /// Get agent by name
     pub fn get_by_name(&self, name: &str) -> Option<RegisteredAgent> {
-        self.name_index
-            .get(name)
-            .and_then(|id| self.get(&id))
+        self.name_index.get(name).and_then(|id| self.get(&id))
     }
-    
+
     /// Update agent status
     pub fn update_status(&self, agent_id: &AgentId, status: AgentStatus) -> Result<()> {
         if let Some(mut agent) = self.agents.get_mut(agent_id) {
@@ -111,28 +113,26 @@ impl AgentRegistry {
             Err(CoreError::Registry(format!("Agent {} not found", agent_id)))
         }
     }
-    
+
     /// List all agents
     pub fn list_all(&self) -> Vec<RegisteredAgent> {
         self.agents.iter().map(|a| a.clone()).collect()
     }
-    
+
     /// Find agents by capability
     pub fn find_by_capability(&self, capability_name: &str) -> Vec<RegisteredAgent> {
         self.agents
             .iter()
-            .filter(|a| {
-                a.capabilities.iter().any(|c| c.name == capability_name)
-            })
+            .filter(|a| a.capabilities.iter().any(|c| c.name == capability_name))
             .map(|a| a.clone())
             .collect()
     }
-    
+
     /// Get agent count
     pub fn count(&self) -> usize {
         self.agents.len()
     }
-    
+
     /// Check if agent exists
     pub fn contains(&self, agent_id: &AgentId) -> bool {
         self.agents.contains_key(agent_id)

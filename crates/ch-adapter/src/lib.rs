@@ -3,8 +3,8 @@
 //! Provides a unified interface for connecting different AI agents
 //! to the Crow Hub system.
 
-use ch_protocol::{AgentMessage, AgentStatus, Capability, HealthStatus};
 use async_trait::async_trait;
+use ch_protocol::{AgentStatus, Capability, HealthStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -16,25 +16,25 @@ pub mod adapters;
 pub enum AdapterError {
     #[error("Connection error: {0}")]
     Connection(String),
-    
+
     #[error("Authentication error: {0}")]
     Authentication(String),
-    
+
     #[error("Request error: {0}")]
     Request(String),
-    
+
     #[error("Response error: {0}")]
     Response(String),
-    
+
     #[error("Rate limit exceeded: {0}")]
     RateLimit(String),
-    
+
     #[error("Timeout after {0}s")]
     Timeout(u64),
-    
+
     #[error("Not implemented: {0}")]
     NotImplemented(String),
-    
+
     #[error("Unknown adapter type: {0}")]
     UnknownAdapter(String),
 }
@@ -127,25 +127,28 @@ pub struct StreamChunk {
 pub trait AgentAdapter: Send + Sync {
     /// Initialize the adapter with configuration
     async fn init(&mut self, config: AdapterConfig) -> Result<()>;
-    
+
     /// Send a chat message and get response
     async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<Response>;
-    
+
     /// Stream a response
-    async fn stream(&self, messages: Vec<Message>) -> Result<Box<dyn Stream<Item = StreamChunk> + Send + Unpin>>;
-    
+    async fn stream(
+        &self,
+        messages: Vec<Message>,
+    ) -> Result<Box<dyn Stream<Item = StreamChunk> + Send + Unpin>>;
+
     /// Get adapter status
     async fn status(&self) -> Result<AgentStatus>;
-    
+
     /// Perform health check
     async fn health_check(&self) -> Result<HealthStatus>;
-    
+
     /// Get adapter capabilities
     fn capabilities(&self) -> Vec<Capability>;
-    
+
     /// Get adapter name
     fn name(&self) -> &str;
-    
+
     /// Get adapter type
     fn adapter_type(&self) -> &str;
 }
@@ -167,7 +170,7 @@ impl AdapterFactory {
             _ => Err(AdapterError::UnknownAdapter(adapter_type.to_string())),
         }
     }
-    
+
     /// List available adapter types
     pub fn available_adapters() -> Vec<&'static str> {
         vec!["claude", "kimi", "gemini", "hermes", "codebuddy"]
@@ -186,32 +189,32 @@ impl AdapterRegistry {
             adapters: HashMap::new(),
         }
     }
-    
+
     /// Register an adapter
     pub fn register(&mut self, name: String, adapter: Box<dyn AgentAdapter>) {
         self.adapters.insert(name, adapter);
     }
-    
+
     /// Get an adapter by name
     pub fn get(&self, name: &str) -> Option<&dyn AgentAdapter> {
         self.adapters.get(name).map(|a| a.as_ref())
     }
-    
+
     /// Get mutable adapter by name
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Box<dyn AgentAdapter>> {
         self.adapters.get_mut(name)
     }
-    
+
     /// Remove an adapter
     pub fn remove(&mut self, name: &str) -> Option<Box<dyn AgentAdapter>> {
         self.adapters.remove(name)
     }
-    
+
     /// List all registered adapters
     pub fn list(&self) -> Vec<&str> {
         self.adapters.keys().map(|k| k.as_str()).collect()
     }
-    
+
     /// Check if adapter exists
     pub fn contains(&self, name: &str) -> bool {
         self.adapters.contains_key(name)
@@ -239,7 +242,7 @@ mod tests {
     fn test_adapter_registry() {
         let mut registry = AdapterRegistry::new();
         assert!(registry.list().is_empty());
-        
+
         // Note: We can't actually register without a real adapter instance
         // This is just a structural test
     }

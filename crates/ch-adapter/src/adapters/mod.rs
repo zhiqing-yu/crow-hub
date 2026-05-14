@@ -1,13 +1,13 @@
 //! Adapter implementations
 
 pub mod claude;
-pub mod kimi;
+pub mod codebuddy;
 pub mod gemini;
 pub mod hermes;
-pub mod codebuddy;
+pub mod kimi;
 
 pub use claude::ClaudeAdapter;
-pub use kimi::KimiAdapter;
+pub use codebuddy::CodeBuddyAdapter;
 pub use gemini::GeminiAdapter;
 pub use hermes::HermesAdapter;
-pub use codebuddy::CodeBuddyAdapter;
+pub use kimi::KimiAdapter;

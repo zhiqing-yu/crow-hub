@@ -2,11 +2,14 @@
 //!
 //! Adapter for CodeBuddy agent
 
-use crate::{AgentAdapter, AdapterConfig, AdapterError, Message, Response, Result, StreamChunk, Tool, UsageInfo, FinishReason};
-use ch_protocol::{AgentStatus, AgentState, HealthStatus, Capability};
+use crate::{
+    AdapterConfig, AdapterError, AgentAdapter, FinishReason, Message, Response, Result,
+    StreamChunk, Tool, UsageInfo,
+};
 use async_trait::async_trait;
-use reqwest::Client;
+use ch_protocol::{AgentState, AgentStatus, Capability, HealthStatus};
 use futures::Stream;
+use reqwest::Client;
 
 /// CodeBuddy agent adapter
 pub struct CodeBuddyAdapter {
@@ -36,14 +39,14 @@ impl Default for CodeBuddyAdapter {
 impl AgentAdapter for CodeBuddyAdapter {
     async fn init(&mut self, config: AdapterConfig) -> Result<()> {
         self.name = config.name;
-        
+
         if let Some(endpoint) = config.settings.get("endpoint") {
             self.endpoint = endpoint.as_str().unwrap_or(&self.endpoint).to_string();
         }
-        
+
         Ok(())
     }
-    
+
     async fn chat(&self, _messages: Vec<Message>, _tools: Option<Vec<Tool>>) -> Result<Response> {
         Ok(Response {
             content: "CodeBuddy adapter placeholder response".to_string(),
@@ -56,11 +59,16 @@ impl AgentAdapter for CodeBuddyAdapter {
             finish_reason: FinishReason::Stop,
         })
     }
-    
-    async fn stream(&self, _messages: Vec<Message>) -> Result<Box<dyn Stream<Item = StreamChunk> + Send + Unpin>> {
-        Err(AdapterError::NotImplemented("Streaming not yet implemented".to_string()))
+
+    async fn stream(
+        &self,
+        _messages: Vec<Message>,
+    ) -> Result<Box<dyn Stream<Item = StreamChunk> + Send + Unpin>> {
+        Err(AdapterError::NotImplemented(
+            "Streaming not yet implemented".to_string(),
+        ))
     }
-    
+
     async fn status(&self) -> Result<AgentStatus> {
         Ok(AgentStatus {
             agent_id: ch_protocol::AgentId::new(),
@@ -74,7 +82,7 @@ impl AgentAdapter for CodeBuddyAdapter {
             },
         })
     }
-    
+
     async fn health_check(&self) -> Result<HealthStatus> {
         Ok(HealthStatus {
             healthy: true,
@@ -82,7 +90,7 @@ impl AgentAdapter for CodeBuddyAdapter {
             message: Some("CodeBuddy adapter is healthy".to_string()),
         })
     }
-    
+
     fn capabilities(&self) -> Vec<Capability> {
         vec![
             Capability {
@@ -105,11 +113,11 @@ impl AgentAdapter for CodeBuddyAdapter {
             },
         ]
     }
-    
+
     fn name(&self) -> &str {
         &self.name
     }
-    
+
     fn adapter_type(&self) -> &str {
         "codebuddy"
     }

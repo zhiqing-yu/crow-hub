@@ -5,7 +5,7 @@
 //! local model servers (Ollama, vLLM, LM Studio).
 
 use crate::drivers::AgentDriver;
-use crate::manifest::{AgentManifest, AuthSection};
+use crate::manifest::AgentManifest;
 use crate::{AgentError, Result};
 use ch_model::{ChatRequest, ChatResponse, ChatStreamChunk, ModelRouter};
 use futures::stream::{self, BoxStream, StreamExt};
@@ -38,8 +38,9 @@ impl APIDriver {
 
     /// Create from a manifest
     pub fn from_manifest(manifest: &AgentManifest, router: Arc<ModelRouter>) -> Result<Self> {
-        let model_section = manifest.model.as_ref()
-            .ok_or_else(|| AgentError::Manifest("API driver requires [model] section".to_string()))?;
+        let model_section = manifest.model.as_ref().ok_or_else(|| {
+            AgentError::Manifest("API driver requires [model] section".to_string())
+        })?;
 
         Ok(Self::new(
             &manifest.agent.name,
@@ -57,13 +58,21 @@ impl AgentDriver for APIDriver {
             request.model = self.default_model.clone();
         }
 
-        debug!("APIDriver '{}' sending request to model '{}'", self.name, request.model);
+        debug!(
+            "APIDriver '{}' sending request to model '{}'",
+            self.name, request.model
+        );
 
-        self.router.chat(request).await
+        self.router
+            .chat(request)
+            .await
             .map_err(|e| AgentError::Driver(e.to_string()))
     }
 
-    async fn stream_chat(&self, request: ChatRequest) -> Result<BoxStream<'static, Result<ChatStreamChunk>>> {
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+    ) -> Result<BoxStream<'static, Result<ChatStreamChunk>>> {
         let resp = self.chat(request).await?;
         let chunk = ChatStreamChunk {
             content: resp.content,
@@ -92,7 +101,7 @@ impl AgentDriver for APIDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ch_model::{ModelRegistry, backends::MockBackend};
+    use ch_model::{backends::MockBackend, ModelRegistry};
 
     #[tokio::test]
     async fn test_api_driver_chat() {
@@ -130,8 +139,7 @@ mod tests {
     #[tokio::test]
     async fn test_api_driver_health_check() {
         let registry = Arc::new(ModelRegistry::new());
-        let mock = MockBackend::new("test")
-            .with_models(vec!["available-model".to_string()]);
+        let mock = MockBackend::new("test").with_models(vec!["available-model".to_string()]);
         registry.register(Arc::new(mock)).await.unwrap();
 
         let router = Arc::new(ModelRouter::new(registry));

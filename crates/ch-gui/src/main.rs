@@ -14,7 +14,7 @@ struct Cli {
     /// Configuration file path
     #[arg(short, long, value_name = "FILE")]
     config: Option<std::path::PathBuf>,
-    
+
     /// Log level
     #[arg(short, long, default_value = "info")]
     log_level: String,
@@ -22,14 +22,14 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(&cli.log_level)
         .init();
-    
+
     info!("Crow Hub GUI v{}", env!("CARGO_PKG_VERSION"));
-    
+
     println!("🐦‍⬛ Crow Hub GUI");
     println!("================");
     println!();
@@ -40,15 +40,15 @@ fn main() -> anyhow::Result<()> {
     println!();
     println!("  cargo run --bin crow");
     println!();
-    
+
     // TODO: Implement Tauri-based GUI in Phase 6
-    // 
+    //
     // The GUI will include:
     // - Agent canvas with drag-and-drop configuration
     // - Workflow editor with visual graph
     // - Real-time monitoring dashboard
     // - Memory browser and search
     // - Settings and configuration UI
-    
+
     Ok(())
 }

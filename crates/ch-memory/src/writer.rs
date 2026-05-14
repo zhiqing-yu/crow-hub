@@ -1,9 +1,8 @@
-use std::sync::Arc;
+use crate::MemoryStore;
 use ch_core::bus::MessageBus;
 use ch_core::channel::ChannelVisibility;
-use ch_protocol::{AgentId, MessageType, Payload, MemoryEntry};
-use crate::MemoryStore;
-use uuid::Uuid;
+use ch_protocol::{AgentId, MemoryEntry, MessageType, Payload};
+use std::sync::Arc;
 
 pub fn spawn_memory_writer(
     bus: Arc<MessageBus>,
@@ -13,16 +12,25 @@ pub fn spawn_memory_writer(
     tokio::spawn(async move {
         let mut rx = bus.subscribe(writer_id).await;
         let _ = bus.join_channel("general", writer_id, ChannelVisibility::Full);
-        
+
         while let Some(msg) = rx.recv().await {
             if let Payload::Text(ref text) = msg.payload {
-                if matches!(msg.message_type, MessageType::TaskRequest | MessageType::TaskResponse) {
+                if matches!(
+                    msg.message_type,
+                    MessageType::TaskRequest | MessageType::TaskResponse
+                ) {
                     let mut metadata = std::collections::HashMap::new();
                     if let Some(corr_id) = msg.correlation_id {
-                        metadata.insert("correlation_id".to_string(), serde_json::Value::String(corr_id.to_string()));
+                        metadata.insert(
+                            "correlation_id".to_string(),
+                            serde_json::Value::String(corr_id.to_string()),
+                        );
                     }
                     if let Some(ref to) = msg.to {
-                        metadata.insert("to_agent".to_string(), serde_json::Value::String(to.agent_id.to_string()));
+                        metadata.insert(
+                            "to_agent".to_string(),
+                            serde_json::Value::String(to.agent_id.to_string()),
+                        );
                     }
 
                     let memory = MemoryEntry {

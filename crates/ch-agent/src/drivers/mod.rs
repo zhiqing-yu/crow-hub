@@ -22,7 +22,10 @@ pub trait AgentDriver: Send + Sync {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse>;
 
     /// Send a streaming chat request
-    async fn stream_chat(&self, request: ChatRequest) -> Result<BoxStream<'static, Result<ChatStreamChunk>>>;
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+    ) -> Result<BoxStream<'static, Result<ChatStreamChunk>>>;
 
     /// Check if the agent is reachable
     async fn health_check(&self) -> Result<bool>;

@@ -3,8 +3,8 @@
 //! Provides a pluggable vector memory system for agents to share
 //! context and knowledge across sessions.
 
-use ch_protocol::MemoryEntry;
 use async_trait::async_trait;
+use ch_protocol::MemoryEntry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -18,19 +18,19 @@ pub mod writer;
 pub enum MemoryError {
     #[error("Storage error: {0}")]
     Storage(String),
-    
+
     #[error("Embedding error: {0}")]
     Embedding(String),
-    
+
     #[error("Not found: {0}")]
     NotFound(String),
-    
+
     #[error("Invalid query: {0}")]
     InvalidQuery(String),
-    
+
     #[error("Backend error: {0}")]
     Backend(String),
-    
+
     #[error("Serialization error: {0}")]
     Serialization(String),
 }
@@ -54,19 +54,19 @@ impl MemoryFilter {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Filter by agent ID
     pub fn with_agent(mut self, agent_id: impl Into<String>) -> Self {
         self.agent_ids.push(agent_id.into());
         self
     }
-    
+
     /// Filter by session ID
     pub fn with_session(mut self, session_id: impl Into<String>) -> Self {
         self.session_ids.push(session_id.into());
         self
     }
-    
+
     /// Filter by memory type
     pub fn with_type(mut self, memory_type: impl Into<String>) -> Self {
         self.memory_types.push(memory_type.into());
@@ -97,46 +97,52 @@ pub struct ImportResult {
 pub trait MemoryStore: Send + Sync {
     /// Initialize the store
     async fn init(&mut self) -> Result<()>;
-    
+
     /// Write a memory entry
     async fn write(&self, memory: MemoryEntry) -> Result<String>;
-    
+
     /// Read a memory entry by ID
     async fn read(&self, memory_id: &str) -> Result<MemoryEntry>;
-    
+
     /// Search memories by semantic similarity
-    async fn search(&self, query: &str, filter: MemoryFilter, top_k: usize) -> Result<Vec<MemoryEntry>>;
-    
+    async fn search(
+        &self,
+        query: &str,
+        filter: MemoryFilter,
+        top_k: usize,
+    ) -> Result<Vec<MemoryEntry>>;
+
     /// Get memories for a session
-    async fn get_session_context(&self, session_id: &str, limit: usize) -> Result<Vec<MemoryEntry>>;
-    
+    async fn get_session_context(&self, session_id: &str, limit: usize)
+        -> Result<Vec<MemoryEntry>>;
+
     /// Get memories for an agent
     async fn get_agent_memories(&self, agent_id: &str, limit: usize) -> Result<Vec<MemoryEntry>>;
-    
+
     /// Get recent memories from a channel
     async fn recent(&self, channel: &str, limit: usize) -> Result<Vec<MemoryEntry>>;
-    
+
     /// Get memories by correlation ID
     async fn by_correlation(&self, id: &str) -> Result<Vec<MemoryEntry>>;
-    
+
     /// Update a memory entry
     async fn update(&self, memory_id: &str, content: &str) -> Result<()>;
-    
+
     /// Delete a memory entry
     async fn delete(&self, memory_id: &str) -> Result<()>;
-    
+
     /// Export memories
     async fn export(&self, filter: MemoryFilter, format: ExportFormat) -> Result<Vec<u8>>;
-    
+
     /// Import memories
     async fn import(&self, data: &[u8], format: ExportFormat) -> Result<ImportResult>;
-    
+
     /// Get memory count
     async fn count(&self) -> Result<usize>;
-    
+
     /// Clear all memories
     async fn clear(&self) -> Result<()>;
-    
+
     /// Close the store
     async fn close(&self) -> Result<()>;
 }
@@ -233,29 +239,29 @@ impl MemoryManager {
             default_store: "default".to_string(),
         }
     }
-    
+
     /// Register a store
     pub fn register(&mut self, name: String, store: Box<dyn MemoryStore>) {
         self.stores.insert(name, store);
     }
-    
+
     /// Get a store by name
     pub fn get(&self, name: &str) -> Option<&dyn MemoryStore> {
         self.stores.get(name).map(|s| s.as_ref())
     }
-    
+
     /// Get the default store
     pub fn default_store(&self) -> Option<&dyn MemoryStore> {
         self.stores.get(&self.default_store).map(|s| s.as_ref())
     }
-    
+
     /// Set the default store
     pub fn set_default(&mut self, name: &str) {
         if self.stores.contains_key(name) {
             self.default_store = name.to_string();
         }
     }
-    
+
     /// Create a store from backend configuration
     pub async fn create_store(backend: MemoryBackend) -> Result<Box<dyn MemoryStore>> {
         match backend {
@@ -263,7 +269,9 @@ impl MemoryManager {
                 let store = backends::sqlite::SqliteMemoryStore::new(config).await?;
                 Ok(Box::new(store))
             }
-            _ => Err(MemoryError::Backend("Backend not yet implemented".to_string())),
+            _ => Err(MemoryError::Backend(
+                "Backend not yet implemented".to_string(),
+            )),
         }
     }
 }
@@ -284,7 +292,7 @@ mod tests {
             .with_agent("agent-1")
             .with_session("session-1")
             .with_type("chat");
-        
+
         assert_eq!(filter.agent_ids, vec!["agent-1"]);
         assert_eq!(filter.session_ids, vec!["session-1"]);
         assert_eq!(filter.memory_types, vec!["chat"]);
@@ -294,7 +302,7 @@ mod tests {
     fn test_memory_backend_config() {
         let sqlite = SqliteConfig::default();
         assert_eq!(sqlite.embedding_dim, 768);
-        
+
         let chroma = ChromaConfig::default();
         assert_eq!(chroma.port, 8000);
     }

@@ -5,9 +5,8 @@
 //! just a hardcoded list.
 
 use crate::manifest::{
-    AgentManifest, AgentSection, CapabilitiesSection, ChannelsSection,
-    DriverType, ModelSection, ShellType, SubprocessSection,
-    SubprocessInputMode, SubprocessOutputMode,
+    AgentManifest, AgentSection, CapabilitiesSection, ChannelsSection, DriverType, ShellType,
+    SubprocessInputMode, SubprocessOutputMode, SubprocessSection,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -69,28 +68,160 @@ pub struct KnownAgent {
 /// excluded here. Those are backends handled by `ch-model`, not CLI agents.
 pub fn known_agents() -> Vec<KnownAgent> {
     vec![
-        KnownAgent { binary: "claude",    display_name: "Claude Code",    description: "Anthropic Claude Code CLI",       chat: true, code_exec: true },
-        KnownAgent { binary: "gemini",    display_name: "Gemini CLI",     description: "Google Gemini CLI",               chat: true, code_exec: true },
-        KnownAgent { binary: "codex",     display_name: "Codex CLI",      description: "OpenAI Codex CLI",                chat: true, code_exec: true },
-        KnownAgent { binary: "aider",     display_name: "Aider",          description: "AI pair programming in terminal", chat: true, code_exec: true },
-        KnownAgent { binary: "cody",      display_name: "Cody",           description: "Sourcegraph Cody CLI",            chat: true, code_exec: false },
-        KnownAgent { binary: "copilot",   display_name: "Copilot CLI",    description: "GitHub Copilot CLI",              chat: true, code_exec: false },
-        KnownAgent { binary: "openclaw",  display_name: "OpenClaw",       description: "OpenClaw agent",                  chat: true, code_exec: true },
-        KnownAgent { binary: "opencode",  display_name: "OpenCode",       description: "OpenCode AI agent",               chat: true, code_exec: true },
-        KnownAgent { binary: "openclaw-browser", display_name: "OpenClaw Browser", description: "OpenClaw browser agent", chat: true, code_exec: true },
-        KnownAgent { binary: "hermes",    display_name: "Hermes",         description: "Hermes agent",                    chat: true, code_exec: true },
-        KnownAgent { binary: "kimi",      display_name: "Kimi CLI",       description: "Moonshot Kimi CLI",               chat: true, code_exec: false },
-        KnownAgent { binary: "tabby",     display_name: "Tabby",          description: "TabbyML code assistant",          chat: true, code_exec: false },
-        KnownAgent { binary: "cline",     display_name: "Cline",          description: "Cline AI assistant",              chat: true, code_exec: true },
-        KnownAgent { binary: "avante",    display_name: "Avante",         description: "Avante AI coding assistant",      chat: true, code_exec: true },
-        KnownAgent { binary: "continue",  display_name: "Continue",       description: "Continue.dev CLI",                chat: true, code_exec: false },
-        KnownAgent { binary: "amp",       display_name: "Amp",            description: "Amp AI terminal agent",           chat: true, code_exec: true },
-        KnownAgent { binary: "goose",     display_name: "Goose",          description: "Block Goose agent",               chat: true, code_exec: true },
-        KnownAgent { binary: "plandex",   display_name: "Plandex",        description: "Plandex AI coding engine",        chat: true, code_exec: true },
-        KnownAgent { binary: "mentat",    display_name: "Mentat",         description: "Mentat AI coder",                 chat: true, code_exec: true },
-        KnownAgent { binary: "sweep",     display_name: "Sweep",          description: "Sweep AI dev assistant",          chat: true, code_exec: true },
-        KnownAgent { binary: "devika",    display_name: "Devika",         description: "Devika AI agent",                 chat: true, code_exec: true },
-        KnownAgent { binary: "gpt-engineer", display_name: "GPT-Engineer", description: "GPT-Engineer CLI",              chat: true, code_exec: true },
+        KnownAgent {
+            binary: "claude",
+            display_name: "Claude Code",
+            description: "Anthropic Claude Code CLI",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "gemini",
+            display_name: "Gemini CLI",
+            description: "Google Gemini CLI",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "codex",
+            display_name: "Codex CLI",
+            description: "OpenAI Codex CLI",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "aider",
+            display_name: "Aider",
+            description: "AI pair programming in terminal",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "cody",
+            display_name: "Cody",
+            description: "Sourcegraph Cody CLI",
+            chat: true,
+            code_exec: false,
+        },
+        KnownAgent {
+            binary: "copilot",
+            display_name: "Copilot CLI",
+            description: "GitHub Copilot CLI",
+            chat: true,
+            code_exec: false,
+        },
+        KnownAgent {
+            binary: "openclaw",
+            display_name: "OpenClaw",
+            description: "OpenClaw agent",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "opencode",
+            display_name: "OpenCode",
+            description: "OpenCode AI agent",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "openclaw-browser",
+            display_name: "OpenClaw Browser",
+            description: "OpenClaw browser agent",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "hermes",
+            display_name: "Hermes",
+            description: "Hermes agent",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "kimi",
+            display_name: "Kimi CLI",
+            description: "Moonshot Kimi CLI",
+            chat: true,
+            code_exec: false,
+        },
+        KnownAgent {
+            binary: "tabby",
+            display_name: "Tabby",
+            description: "TabbyML code assistant",
+            chat: true,
+            code_exec: false,
+        },
+        KnownAgent {
+            binary: "cline",
+            display_name: "Cline",
+            description: "Cline AI assistant",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "avante",
+            display_name: "Avante",
+            description: "Avante AI coding assistant",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "continue",
+            display_name: "Continue",
+            description: "Continue.dev CLI",
+            chat: true,
+            code_exec: false,
+        },
+        KnownAgent {
+            binary: "amp",
+            display_name: "Amp",
+            description: "Amp AI terminal agent",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "goose",
+            display_name: "Goose",
+            description: "Block Goose agent",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "plandex",
+            display_name: "Plandex",
+            description: "Plandex AI coding engine",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "mentat",
+            display_name: "Mentat",
+            description: "Mentat AI coder",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "sweep",
+            display_name: "Sweep",
+            description: "Sweep AI dev assistant",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "devika",
+            display_name: "Devika",
+            description: "Devika AI agent",
+            chat: true,
+            code_exec: true,
+        },
+        KnownAgent {
+            binary: "gpt-engineer",
+            display_name: "GPT-Engineer",
+            description: "GPT-Engineer CLI",
+            chat: true,
+            code_exec: true,
+        },
     ]
 }
 
@@ -116,7 +247,6 @@ pub struct DiscoveredAgent {
     /// Code execution capability
     pub code_exec: bool,
 }
-
 
 /// Where the scan found the agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,9 +304,7 @@ impl EnvironmentScanner {
             return Vec::new();
         }
 
-        let output = Command::new("wsl")
-            .args(["-l", "-q"])
-            .output();
+        let output = Command::new("wsl").args(["-l", "-q"]).output();
 
         match output {
             Ok(out) if out.status.success() => {
@@ -197,7 +325,7 @@ impl EnvironmentScanner {
                     .filter(|l| !l.is_empty())
                     .collect()
             }
-            _ => Vec::new()
+            _ => Vec::new(),
         }
     }
 
@@ -222,10 +350,7 @@ impl EnvironmentScanner {
             }
         }
 
-        info!(
-            "Scan complete: {} CLI agents",
-            results.agents.len()
-        );
+        info!("Scan complete: {} CLI agents", results.agents.len());
         results
     }
 
@@ -246,7 +371,6 @@ impl EnvironmentScanner {
                 });
             }
         }
-
     }
 
     /// Scan a WSL2 distro for known binaries
@@ -289,8 +413,6 @@ impl EnvironmentScanner {
             }
         }
     }
-
-
 
     /// Check if a binary exists on native Windows PATH
     fn binary_exists_native(&self, binary: &str) -> bool {
@@ -335,11 +457,16 @@ impl EnvironmentScanner {
 
         let output = Command::new("ssh")
             .args([
-                "-o", "ConnectTimeout=5",
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=accept-new",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 &format!("{}@{}", user, host),
-                "bash", "-lc", &script,
+                "bash",
+                "-lc",
+                &script,
             ])
             .output()
             .ok()?;
@@ -353,7 +480,13 @@ impl EnvironmentScanner {
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stderr.trim().is_empty() {
-                warn!("  SSH scan stderr for {} on {}@{}: {}", binary, user, host, stderr.trim());
+                warn!(
+                    "  SSH scan stderr for {} on {}@{}: {}",
+                    binary,
+                    user,
+                    host,
+                    stderr.trim()
+                );
             }
         }
         None
@@ -398,10 +531,12 @@ impl EnvironmentScanner {
             .last()
             .unwrap_or("")
             .to_string();
-        if path.is_empty() { None } else { Some(path) }
+        if path.is_empty() {
+            None
+        } else {
+            Some(path)
+        }
     }
-
-
 }
 
 // ── Manifest generation from discovered agents ───────────────
@@ -439,8 +574,14 @@ impl DiscoveredAgent {
                 SubprocessInputMode::Argv,
                 SubprocessOutputMode::Json,
                 Some("finalAssistantVisibleText".to_string()),
-                vec!["agent".to_string(), "--agent".to_string(), "main".to_string(),
-                     "--local".to_string(), "--json".to_string(), "-m".to_string()],
+                vec![
+                    "agent".to_string(),
+                    "--agent".to_string(),
+                    "main".to_string(),
+                    "--local".to_string(),
+                    "--json".to_string(),
+                    "-m".to_string(),
+                ],
             ),
             "kimi" => (
                 SubprocessInputMode::Argv,
@@ -470,7 +611,12 @@ impl DiscoveredAgent {
                 None,
                 vec!["chat".to_string(), "-Q".to_string(), "-q".to_string()],
             ),
-            _ => (SubprocessInputMode::Json, SubprocessOutputMode::Raw, None, vec![]),
+            _ => (
+                SubprocessInputMode::Json,
+                SubprocessOutputMode::Raw,
+                None,
+                vec![],
+            ),
         };
 
         // Translate executable path to WSL absolute mount point if needed.
@@ -548,8 +694,6 @@ impl DiscoveredAgent {
         Ok(path)
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

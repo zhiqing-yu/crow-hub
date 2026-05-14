@@ -2,9 +2,12 @@
 //!
 //! Routes chat requests to the appropriate backend based on model name.
 
-use crate::{ChatRequest, ChatResponse, ModelBackend, ModelRegistry, Result, ModelError, ModelInfo, BackendInfo};
+use crate::{
+    BackendInfo, ChatRequest, ChatResponse, ModelBackend, ModelError, ModelInfo, ModelRegistry,
+    Result,
+};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Routes model requests to the correct backend
 pub struct ModelRouter {
@@ -22,13 +25,13 @@ impl ModelRouter {
     pub async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let model = &request.model;
 
-        let backend = self.registry
-            .find_backend_for_model(model)
-            .ok_or_else(|| ModelError::ModelNotFound(format!(
+        let backend = self.registry.find_backend_for_model(model).ok_or_else(|| {
+            ModelError::ModelNotFound(format!(
                 "No backend found for model '{}'. Available: {:?}",
                 model,
                 self.list_models().iter().map(|m| &m.id).collect::<Vec<_>>()
-            )))?;
+            ))
+        })?;
 
         debug!(
             "Routing '{}' request to backend '{}'",
@@ -97,7 +100,11 @@ pub struct RouterSummary {
 
 impl std::fmt::Display for RouterSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Model Router: {} backends, {} models", self.total_backends, self.total_models)?;
+        writeln!(
+            f,
+            "Model Router: {} backends, {} models",
+            self.total_backends, self.total_models
+        )?;
         for b in &self.backends {
             writeln!(f, "  • {}", b)?;
         }
@@ -155,10 +162,16 @@ mod tests {
         router.register_backend(Arc::new(mock1)).await.unwrap();
         router.register_backend(Arc::new(mock2)).await.unwrap();
 
-        let resp1 = router.chat(ChatRequest::simple("llama3", "Hi")).await.unwrap();
+        let resp1 = router
+            .chat(ChatRequest::simple("llama3", "Hi"))
+            .await
+            .unwrap();
         assert_eq!(resp1.content, "From backend 1");
 
-        let resp2 = router.chat(ChatRequest::simple("gpt-4", "Hi")).await.unwrap();
+        let resp2 = router
+            .chat(ChatRequest::simple("gpt-4", "Hi"))
+            .await
+            .unwrap();
         assert_eq!(resp2.content, "From backend 2");
     }
 
@@ -167,8 +180,7 @@ mod tests {
         let registry = Arc::new(ModelRegistry::new());
         let router = ModelRouter::new(registry);
 
-        let mock = MockBackend::new("test")
-            .with_models(vec!["m1".to_string(), "m2".to_string()]);
+        let mock = MockBackend::new("test").with_models(vec!["m1".to_string(), "m2".to_string()]);
         router.register_backend(Arc::new(mock)).await.unwrap();
 
         let summary = router.summary();

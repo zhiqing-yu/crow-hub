@@ -10,16 +10,16 @@
 
 use crate::drivers::AgentDriver;
 use crate::host_env::HostEnv;
-use crate::manifest::{ShellType, SubprocessSection, SubprocessInputMode, SubprocessOutputMode};
+use crate::manifest::{ShellType, SubprocessInputMode, SubprocessOutputMode, SubprocessSection};
 use crate::{AgentError, Result};
-use ch_model::{ChatRequest, ChatResponse, ChatStreamChunk, ChatRole, FinishReason, TokenUsage};
+use ch_model::{ChatRequest, ChatResponse, ChatStreamChunk, FinishReason, TokenUsage};
 use futures::stream::{self, BoxStream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 // ── Shell quoting + remote invocation helpers ─────────────────
 
@@ -111,7 +111,6 @@ fn compose_remote_invocation(
     }
 }
 
-
 /// Driver that spawns CLI agents as subprocesses
 pub struct SubprocessDriver {
     /// Agent name
@@ -136,11 +135,7 @@ impl SubprocessDriver {
 
     /// Create a driver with a pre-probed host env.  Used by the runtime
     /// at agent-load time.
-    pub fn with_env(
-        name: impl Into<String>,
-        config: SubprocessSection,
-        host_env: HostEnv,
-    ) -> Self {
+    pub fn with_env(name: impl Into<String>, config: SubprocessSection, host_env: HostEnv) -> Self {
         Self {
             name: name.into(),
             config,
@@ -217,9 +212,12 @@ impl SubprocessDriver {
                 // Match the scanner's SSH options so connections never prompt
                 // and fail fast on first-connect host-key prompts.
                 cmd.args([
-                    "-o", "BatchMode=yes",
-                    "-o", "ConnectTimeout=10",
-                    "-o", "StrictHostKeyChecking=accept-new",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
                 ]);
                 if let Some(ref key) = self.config.ssh_key {
                     cmd.args(["-i", key]);
@@ -257,11 +255,12 @@ impl SubprocessDriver {
             self.name, self.config.command, self.config.shell
         );
 
-        let child = cmd.spawn()
-            .map_err(|e| AgentError::Driver(format!(
+        let child = cmd.spawn().map_err(|e| {
+            AgentError::Driver(format!(
                 "Failed to spawn '{}': {}. Shell: {:?}",
                 self.config.command, e, self.config.shell
-            )))?;
+            ))
+        })?;
 
         *self.child.lock().await = Some(child);
         info!("Subprocess agent '{}' started", self.name);
@@ -269,7 +268,11 @@ impl SubprocessDriver {
     }
 
     /// Helper to resolve a JSON value from a path string like "a.b.c"
-    fn get_value_by_path<'a>(&self, value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    fn get_value_by_path<'a>(
+        &self,
+        value: &'a serde_json::Value,
+        path: &str,
+    ) -> Option<&'a serde_json::Value> {
         let mut current = value;
         for part in path.split('.') {
             if let Ok(idx) = part.parse::<usize>() {
@@ -286,11 +289,12 @@ impl SubprocessDriver {
         let ansi_escape = regex::Regex::new(r"\x1b\[[0-9;]*[mK]").unwrap();
         let clean_raw = ansi_escape.replace_all(raw, "").to_string();
         let trimmed = clean_raw.trim();
-        
+
         // If OutputMode is Json, try to parse and filter
         if self.config.output_mode == SubprocessOutputMode::Json {
             // Find the outermost JSON block (first { to last })
-            let json_str = if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+            let json_str = if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}'))
+            {
                 if start <= end {
                     Some(&trimmed[start..=end])
                 } else {
@@ -310,8 +314,8 @@ impl SubprocessDriver {
                                 other => other.to_string(),
                             };
                         }
-                    } 
-                    
+                    }
+
                     // 2. Try common default fields if filter failed or was absent
                     if let Some(s) = val.get("content").and_then(|v| v.as_str()) {
                         return s.to_string();
@@ -326,7 +330,7 @@ impl SubprocessDriver {
                             }
                         }
                     }
-                    
+
                     // 3. Fallback to SubprocessResponse format
                     if let Ok(resp) = serde_json::from_value::<SubprocessResponse>(val.clone()) {
                         return resp.content;
@@ -334,7 +338,7 @@ impl SubprocessDriver {
                 }
             }
         }
-        
+
         // Fallback or Raw mode
         trimmed.to_string()
     }
@@ -343,7 +347,9 @@ impl SubprocessDriver {
 #[async_trait::async_trait]
 impl AgentDriver for SubprocessDriver {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
-        let prompt = request.messages.last()
+        let prompt = request
+            .messages
+            .last()
             .map(|m| m.content.clone())
             .unwrap_or_default();
 
@@ -355,17 +361,19 @@ impl AgentDriver for SubprocessDriver {
             let mut cmd = self.build_command(Some(&prompt));
             cmd.stdin(Stdio::null());
 
-            let output = cmd.output().await
-                .map_err(|e| AgentError::Driver(format!(
+            let output = cmd.output().await.map_err(|e| {
+                AgentError::Driver(format!(
                     "Failed to execute '{}' (shell={:?}): {}",
                     self.config.command, self.config.shell, e
-                )))?;
+                ))
+            })?;
 
             let raw_stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let raw_stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
             // Log stderr for debugging (always, even on success) but filter WSL noise
-            let filtered_stderr = raw_stderr.lines()
+            let filtered_stderr = raw_stderr
+                .lines()
                 .filter(|line| {
                     let trimmed = line.trim();
                     !trimmed.starts_with("wsl: ") && !trimmed.starts_with("wsl:")
@@ -378,7 +386,11 @@ impl AgentDriver for SubprocessDriver {
             if !filtered_stderr.is_empty() {
                 // Truncate stderr warning to avoid corrupting the TUI with massive JSON payloads
                 if filtered_stderr.len() > 300 {
-                    warn!("[{}] stderr (truncated): {}...", self.name, &filtered_stderr[..300]);
+                    warn!(
+                        "[{}] stderr (truncated): {}...",
+                        self.name,
+                        &filtered_stderr[..300]
+                    );
                 } else {
                     warn!("[{}] stderr: {}", self.name, filtered_stderr);
                 }
@@ -396,16 +408,22 @@ impl AgentDriver for SubprocessDriver {
             // empty, which made every CLI misconfiguration look identical as
             // "Agent process failed (exit code 1)" with no stderr detail.
             if !output.status.success() {
-                let exit_info = output.status.code()
+                let exit_info = output
+                    .status
+                    .code()
                     .map(|c| format!("exit {}", c))
                     .unwrap_or_else(|| "killed by signal".to_string());
-                let invocation = format!(
-                    "{} {}",
-                    self.config.command,
-                    self.config.args.join(" ")
-                );
-                let stdout_snip = if raw_stdout.is_empty() { "(empty)".to_string() } else { raw_stdout.clone() };
-                let stderr_snip = if filtered_stderr.is_empty() { "(empty)".to_string() } else { filtered_stderr.clone() };
+                let invocation = format!("{} {}", self.config.command, self.config.args.join(" "));
+                let stdout_snip = if raw_stdout.is_empty() {
+                    "(empty)".to_string()
+                } else {
+                    raw_stdout.clone()
+                };
+                let stderr_snip = if filtered_stderr.is_empty() {
+                    "(empty)".to_string()
+                } else {
+                    filtered_stderr.clone()
+                };
                 return Err(AgentError::Driver(format!(
                     "Agent '{}' failed ({}) — invocation: `{}` (shell={:?})\n  stdout: {}\n  stderr: {}",
                     self.name, exit_info, invocation, self.config.shell,
@@ -445,7 +463,8 @@ impl AgentDriver for SubprocessDriver {
             child_lock = self.child.lock().await;
         }
 
-        let child = child_lock.as_mut()
+        let child = child_lock
+            .as_mut()
             .ok_or_else(|| AgentError::Driver("Subprocess not running".to_string()))?;
 
         // Write based on input mode
@@ -454,10 +473,14 @@ impl AgentDriver for SubprocessDriver {
                 SubprocessInputMode::Json => {
                     let req = SubprocessRequest {
                         model: request.model.clone(),
-                        messages: request.messages.iter().map(|m| SubprocessMessage {
-                            role: format!("{:?}", m.role).to_lowercase(),
-                            content: m.content.clone(),
-                        }).collect(),
+                        messages: request
+                            .messages
+                            .iter()
+                            .map(|m| SubprocessMessage {
+                                role: format!("{:?}", m.role).to_lowercase(),
+                                content: m.content.clone(),
+                            })
+                            .collect(),
                     };
                     serde_json::to_string(&req).map_err(|e| AgentError::Driver(e.to_string()))?
                 }
@@ -465,9 +488,13 @@ impl AgentDriver for SubprocessDriver {
                 SubprocessInputMode::Argv => unreachable!(),
             };
 
-            stdin.write_all(payload.as_bytes()).await
+            stdin
+                .write_all(payload.as_bytes())
+                .await
                 .map_err(|e| AgentError::Driver(format!("stdin write failed: {}", e)))?;
-            stdin.flush().await
+            stdin
+                .flush()
+                .await
                 .map_err(|e| AgentError::Driver(format!("stdin flush failed: {}", e)))?;
         }
 
@@ -479,18 +506,18 @@ impl AgentDriver for SubprocessDriver {
         // Read response — chunk-based accumulation instead of a single
         // read_line, because many agents emit multi-line output or flush
         // in arbitrary chunks.
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or(AgentError::Driver("stdout unavailable".into()))?;
         let mut reader = BufReader::new(stdout);
         let mut buf = Vec::with_capacity(4096);
 
-        let read_result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            async {
-                // Read until EOF (child closes its stdout)
-                tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut buf).await
-            },
-        ).await;
+        let read_result = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+            // Read until EOF (child closes its stdout)
+            tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut buf).await
+        })
+        .await;
 
         match read_result {
             Ok(Ok(_)) => {
@@ -505,12 +532,19 @@ impl AgentDriver for SubprocessDriver {
                 })
             }
             Ok(Err(e)) => Err(AgentError::Driver(format!("stdout read error: {}", e))),
-            Err(_) => Err(AgentError::Driver("Subprocess response timed out after 120s".into())),
+            Err(_) => Err(AgentError::Driver(
+                "Subprocess response timed out after 120s".into(),
+            )),
         }
     }
 
-    async fn stream_chat(&self, request: ChatRequest) -> Result<BoxStream<'static, Result<ChatStreamChunk>>> {
-        let prompt = request.messages.last()
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+    ) -> Result<BoxStream<'static, Result<ChatStreamChunk>>> {
+        let prompt = request
+            .messages
+            .last()
             .map(|m| m.content.clone())
             .unwrap_or_default();
 
@@ -520,14 +554,17 @@ impl AgentDriver for SubprocessDriver {
         // Structured JSON outputs are often multi-line, which breaks
         // line-by-line parsing — fall through to `chat()` for Json output
         // mode to accumulate and parse correctly.
-        if self.config.input_mode == SubprocessInputMode::Argv && self.config.output_mode != SubprocessOutputMode::Json {
+        if self.config.input_mode == SubprocessInputMode::Argv
+            && self.config.output_mode != SubprocessOutputMode::Json
+        {
             let mut cmd = self.build_command(Some(&prompt));
             cmd.stdin(Stdio::null());
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
 
-            let mut child = cmd.spawn()
-                .map_err(|e| AgentError::Driver(format!("Failed to spawn '{}': {}", self.config.command, e)))?;
+            let mut child = cmd.spawn().map_err(|e| {
+                AgentError::Driver(format!("Failed to spawn '{}': {}", self.config.command, e))
+            })?;
 
             // Drain stderr in background so the pipe buffer never fills
             if let Some(stderr) = child.stderr.take() {
@@ -544,81 +581,94 @@ impl AgentDriver for SubprocessDriver {
                 });
             }
 
-            let stdout = child.stdout.take()
+            let stdout = child
+                .stdout
+                .take()
                 .ok_or(AgentError::Driver("stdout unavailable".into()))?;
             let lines = BufReader::new(stdout).lines();
             let config = self.config.clone();
 
-            let stream = stream::unfold(
-                (lines, child),
-                move |(mut lines, mut child)| {
-                    let cfg = config.clone();
-                    async move {
-                        match lines.next_line().await {
-                            Ok(Some(line)) => {
-                                let trimmed = line.trim();
+            let stream = stream::unfold((lines, child), move |(mut lines, mut child)| {
+                let cfg = config.clone();
+                async move {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            let trimmed = line.trim();
 
-                                // Skip noise lines
-                                let is_noise = trimmed.is_empty()
-                                    || trimmed.contains("Failed to translate")
-                                    || trimmed.starts_with("\x1b[")
-                                    || trimmed.starts_with("warning:")
-                                    || trimmed.starts_with("wsl:");
-                                if is_noise {
-                                    return Some((Ok(ChatStreamChunk {
+                            // Skip noise lines
+                            let is_noise = trimmed.is_empty()
+                                || trimmed.contains("Failed to translate")
+                                || trimmed.starts_with("\x1b[")
+                                || trimmed.starts_with("warning:")
+                                || trimmed.starts_with("wsl:");
+                            if is_noise {
+                                return Some((
+                                    Ok(ChatStreamChunk {
                                         content: String::new(),
                                         is_final: false,
                                         finish_reason: None,
                                         usage: None,
-                                    }), (lines, child)));
-                                }
+                                    }),
+                                    (lines, child),
+                                ));
+                            }
 
-                                // Extract content based on output mode
-                                let content = if cfg.output_mode == SubprocessOutputMode::Json {
-                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                                        if let Some(ref filter) = cfg.output_filter {
-                                            let mut cur = &val;
-                                            for part in filter.split('.') {
-                                                cur = if let Ok(i) = part.parse::<usize>() {
-                                                    cur.get(i).unwrap_or(&serde_json::Value::Null)
-                                                } else {
-                                                    cur.get(part).unwrap_or(&serde_json::Value::Null)
-                                                };
-                                            }
-                                            cur.as_str().map(|s| s.to_string())
-                                                .unwrap_or_else(|| trimmed.to_string())
-                                        } else {
-                                            val.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                                .or_else(|| val.get("text").and_then(|v| v.as_str()).map(|s| s.to_string()))
-                                                .unwrap_or_else(|| trimmed.to_string())
+                            // Extract content based on output mode
+                            let content = if cfg.output_mode == SubprocessOutputMode::Json {
+                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed)
+                                {
+                                    if let Some(ref filter) = cfg.output_filter {
+                                        let mut cur = &val;
+                                        for part in filter.split('.') {
+                                            cur = if let Ok(i) = part.parse::<usize>() {
+                                                cur.get(i).unwrap_or(&serde_json::Value::Null)
+                                            } else {
+                                                cur.get(part).unwrap_or(&serde_json::Value::Null)
+                                            };
                                         }
+                                        cur.as_str()
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_else(|| trimmed.to_string())
                                     } else {
-                                        trimmed.to_string()
+                                        val.get("content")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                            .or_else(|| {
+                                                val.get("text")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string())
+                                            })
+                                            .unwrap_or_else(|| trimmed.to_string())
                                     }
                                 } else {
                                     trimmed.to_string()
-                                };
+                                }
+                            } else {
+                                trimmed.to_string()
+                            };
 
-                                Some((Ok(ChatStreamChunk {
+                            Some((
+                                Ok(ChatStreamChunk {
                                     content: format!("{}\n", content),
                                     is_final: false,
                                     finish_reason: None,
                                     usage: None,
-                                }), (lines, child)))
-                            }
-                            Ok(None) => {
-                                // EOF — process finished
-                                let _ = child.wait().await;
-                                None
-                            }
-                            Err(_) => {
-                                let _ = child.kill().await;
-                                None
-                            }
+                                }),
+                                (lines, child),
+                            ))
+                        }
+                        Ok(None) => {
+                            // EOF — process finished
+                            let _ = child.wait().await;
+                            None
+                        }
+                        Err(_) => {
+                            let _ = child.kill().await;
+                            None
                         }
                     }
-                },
-            );
+                }
+            });
 
             return Ok(stream.boxed());
         }
@@ -721,19 +771,15 @@ mod tests {
         // Globs, $vars, semicolons, backticks, pipes, redirections — all must
         // be inside single quotes so the remote shell doesn't interpret them.
         for s in [
-            "*.rs",
-            "$HOME",
-            "a;b",
-            "`cmd`",
-            "a|b",
-            "a>b",
-            "a&b",
-            "a(b)c",
-            "a[b]c",
-            "a{b}c",
+            "*.rs", "$HOME", "a;b", "`cmd`", "a|b", "a>b", "a&b", "a(b)c", "a[b]c", "a{b}c",
         ] {
             let q = shell_quote(s);
-            assert!(q.starts_with('\''), "expected {:?} to be quoted, got {:?}", s, q);
+            assert!(
+                q.starts_with('\''),
+                "expected {:?} to be quoted, got {:?}",
+                s,
+                q
+            );
         }
     }
 
@@ -741,7 +787,10 @@ mod tests {
 
     fn fake_env() -> HostEnv {
         let mut env = HostEnv::new();
-        env.vars.insert("PATH".into(), "/home/u/.nvm/versions/node/v24/bin:/usr/bin".into());
+        env.vars.insert(
+            "PATH".into(),
+            "/home/u/.nvm/versions/node/v24/bin:/usr/bin".into(),
+        );
         env.vars.insert("NVM_DIR".into(), "/home/u/.nvm".into());
         env
     }
@@ -794,28 +843,16 @@ mod tests {
 
     #[test]
     fn compose_remote_invocation_without_prompt() {
-        let s = compose_remote_invocation(
-            "/usr/local/bin/claude",
-            &[],
-            None,
-            &fake_env(),
-            None,
-            None,
-        );
+        let s =
+            compose_remote_invocation("/usr/local/bin/claude", &[], None, &fake_env(), None, None);
         assert!(s.ends_with("/usr/local/bin/claude"));
         assert!(s.starts_with("env "));
     }
 
     #[test]
     fn compose_remote_invocation_quotes_prompt_with_single_quote() {
-        let s = compose_remote_invocation(
-            "/bin/echo",
-            &[],
-            Some("it's me"),
-            &fake_env(),
-            None,
-            None,
-        );
+        let s =
+            compose_remote_invocation("/bin/echo", &[], Some("it's me"), &fake_env(), None, None);
         // Single quote inside the prompt is properly POSIX-escaped
         assert!(s.contains(r"'it'\''s me'"), "got: {}", s);
     }

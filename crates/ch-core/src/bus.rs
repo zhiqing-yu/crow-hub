@@ -3,15 +3,15 @@
 //! Provides pub/sub messaging, named channels, and direct messages
 //! for inter-agent communication.
 
-use ch_protocol::{AgentMessage, AgentId};
+use ch_protocol::{AgentId, AgentMessage};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::channel::{Channel, ChannelInfo, ChannelVisibility};
-use crate::Result;
 use crate::CoreError;
+use crate::Result;
 
 /// Message bus for agent communication
 pub struct MessageBus {
@@ -35,7 +35,7 @@ impl MessageBus {
     /// Create a new message bus
     pub fn new() -> Self {
         let (broadcast, _) = broadcast::channel(1000);
-        
+
         Self {
             subscribers: DashMap::new(),
             broadcast,
@@ -46,7 +46,7 @@ impl MessageBus {
             channel_history: DashMap::new(),
         }
     }
-    
+
     /// Start the message bus
     pub async fn start(&self) -> Result<()> {
         let mut running = self.running.write().await;
@@ -54,7 +54,7 @@ impl MessageBus {
         info!("Message bus started");
         Ok(())
     }
-    
+
     /// Shutdown the message bus
     pub async fn shutdown(&self) -> Result<()> {
         let mut running = self.running.write().await;
@@ -63,12 +63,12 @@ impl MessageBus {
         info!("Message bus shutdown");
         Ok(())
     }
-    
+
     /// Check if bus is running
     pub async fn is_running(&self) -> bool {
         *self.running.read().await
     }
-    
+
     // ── Agent Subscription ───────────────────────────────────
 
     /// Register a subscriber
@@ -78,7 +78,7 @@ impl MessageBus {
         debug!("Agent {} subscribed to message bus", agent_id);
         rx
     }
-    
+
     /// Unregister a subscriber
     pub fn unsubscribe(&self, agent_id: &AgentId) {
         self.subscribers.remove(agent_id);
@@ -94,7 +94,7 @@ impl MessageBus {
     pub fn subscribe_broadcast(&self) -> broadcast::Receiver<AgentMessage> {
         self.broadcast.subscribe()
     }
-    
+
     // ── Direct Messaging ─────────────────────────────────────
 
     /// Publish a message (direct or broadcast)
@@ -102,7 +102,7 @@ impl MessageBus {
         if !self.is_running().await {
             return Err(CoreError::Bus("Bus not running".to_string()));
         }
-        
+
         // Add to history
         {
             let mut history = self.history.write().await;
@@ -111,10 +111,10 @@ impl MessageBus {
                 history.remove(0);
             }
         }
-        
+
         // Send to broadcast channel (for monitors)
         let _ = self.broadcast.send(message.clone());
-        
+
         // Route to specific recipient if specified
         if let Some(ref to) = message.to {
             if let Some(subscriber) = self.subscribers.get(&to.agent_id) {
@@ -132,14 +132,14 @@ impl MessageBus {
                 }
             }
         }
-        
+
         Ok(())
     }
 
     /// Send a direct message to a specific agent
     pub async fn send_dm(
         &self,
-        from_id: &AgentId,
+        _from_id: &AgentId,
         to_id: &AgentId,
         message: AgentMessage,
     ) -> Result<()> {
@@ -170,7 +170,7 @@ impl MessageBus {
 
         Ok(())
     }
-    
+
     /// Send message with response expectation
     pub async fn request(
         &self,
@@ -178,11 +178,11 @@ impl MessageBus {
         timeout: std::time::Duration,
     ) -> Result<AgentMessage> {
         let correlation_id = message.message_id;
-        
+
         self.publish(message).await?;
-        
+
         let mut rx = self.broadcast.subscribe();
-        
+
         let result = tokio::time::timeout(timeout, async {
             loop {
                 match rx.recv().await {
@@ -194,22 +194,26 @@ impl MessageBus {
                     Err(e) => return Err(CoreError::Bus(e.to_string())),
                 }
             }
-        }).await;
-        
+        })
+        .await;
+
         match result {
             Ok(Ok(msg)) => Ok(msg),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(CoreError::Bus("Request timeout".to_string())),
         }
     }
-    
+
     // ── Channel Operations ───────────────────────────────────
 
     /// Create a named channel
     pub fn create_channel(&self, name: impl Into<String>) -> Result<()> {
         let name = name.into();
         if self.channels.contains_key(&name) {
-            return Err(CoreError::Channel(format!("Channel '{}' already exists", name)));
+            return Err(CoreError::Channel(format!(
+                "Channel '{}' already exists",
+                name
+            )));
         }
         self.channels.insert(name.clone(), Channel::new(&name));
         self.channel_history
@@ -235,24 +239,30 @@ impl MessageBus {
         agent_id: AgentId,
         visibility: ChannelVisibility,
     ) -> Result<()> {
-        let channel = self.channels
+        let channel = self
+            .channels
             .get(channel_name)
             .ok_or_else(|| CoreError::Channel(format!("Channel '{}' not found", channel_name)))?;
 
         channel.join(agent_id, visibility);
-        debug!("Agent {} joined #{} with {:?} visibility", agent_id, channel_name, visibility);
+        debug!(
+            "Agent {} joined #{} with {:?} visibility",
+            agent_id, channel_name, visibility
+        );
         Ok(())
     }
 
     /// Remove an agent from a channel
     pub fn leave_channel(&self, channel_name: &str, agent_id: &AgentId) -> Result<()> {
-        let channel = self.channels
+        let channel = self
+            .channels
             .get(channel_name)
             .ok_or_else(|| CoreError::Channel(format!("Channel '{}' not found", channel_name)))?;
 
         if !channel.leave(agent_id) {
             return Err(CoreError::Channel(format!(
-                "Agent {} is not in channel '{}'", agent_id, channel_name
+                "Agent {} is not in channel '{}'",
+                agent_id, channel_name
             )));
         }
         debug!("Agent {} left #{}", agent_id, channel_name);
@@ -270,7 +280,8 @@ impl MessageBus {
             return Err(CoreError::Bus("Bus not running".to_string()));
         }
 
-        let channel = self.channels
+        let channel = self
+            .channels
             .get(channel_name)
             .ok_or_else(|| CoreError::Channel(format!("Channel '{}' not found", channel_name)))?;
 
@@ -326,7 +337,9 @@ impl MessageBus {
 
     /// Get channel info
     pub fn get_channel_info(&self, name: &str) -> Option<ChannelInfo> {
-        self.channels.get(name).map(|ch| ChannelInfo::from(ch.value()))
+        self.channels
+            .get(name)
+            .map(|ch| ChannelInfo::from(ch.value()))
     }
 
     /// Get channel message history
@@ -335,7 +348,8 @@ impl MessageBus {
         channel_name: &str,
         limit: usize,
     ) -> Result<Vec<AgentMessage>> {
-        let history = self.channel_history
+        let history = self
+            .channel_history
             .get(channel_name)
             .ok_or_else(|| CoreError::Channel(format!("Channel '{}' not found", channel_name)))?;
 
@@ -367,24 +381,19 @@ impl Default for MessageBus {
 mod tests {
     use super::*;
     use ch_protocol::{AgentAddress, MessageType, Payload};
-    
+
     #[tokio::test]
     async fn test_subscribe_publish() {
         let bus = MessageBus::new();
         bus.start().await.unwrap();
-        
+
         let agent_id = AgentId::new();
         let mut _rx = bus.subscribe(agent_id).await;
-        
+
         let from = AgentAddress::new("sender", "test");
         let to = AgentAddress::new("receiver", "test");
-        let msg = AgentMessage::new(
-            from,
-            Some(to),
-            MessageType::StatusHeartbeat,
-            Payload::Empty,
-        );
-        
+        let msg = AgentMessage::new(from, Some(to), MessageType::StatusHeartbeat, Payload::Empty);
+
         bus.publish(msg.clone()).await.unwrap();
         assert_eq!(bus.subscriber_count(), 1);
     }
@@ -407,9 +416,12 @@ mod tests {
         let mut rx2 = bus.subscribe(agent2).await;
         let mut rx3 = bus.subscribe(agent3).await;
 
-        bus.join_channel("general", agent1, ChannelVisibility::Full).unwrap();
-        bus.join_channel("general", agent2, ChannelVisibility::Full).unwrap();
-        bus.join_channel("general", agent3, ChannelVisibility::None).unwrap();
+        bus.join_channel("general", agent1, ChannelVisibility::Full)
+            .unwrap();
+        bus.join_channel("general", agent2, ChannelVisibility::Full)
+            .unwrap();
+        bus.join_channel("general", agent3, ChannelVisibility::None)
+            .unwrap();
 
         // Send message from agent1
         let from = AgentAddress::new("agent1", "test");
@@ -417,17 +429,13 @@ mod tests {
         bus.send_to_channel("general", &agent1, msg).await.unwrap();
 
         // agent2 (Full) should receive it
-        let received = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx2.recv(),
-        ).await;
+        let received =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx2.recv()).await;
         assert!(received.is_ok());
 
         // agent3 (None) should NOT receive it
-        let not_received = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            rx3.recv(),
-        ).await;
+        let not_received =
+            tokio::time::timeout(std::time::Duration::from_millis(50), rx3.recv()).await;
         assert!(not_received.is_err()); // timeout = no message
     }
 
@@ -442,7 +450,9 @@ mod tests {
     async fn test_channel_not_found_error() {
         let bus = MessageBus::new();
         let agent = AgentId::new();
-        assert!(bus.join_channel("nope", agent, ChannelVisibility::Full).is_err());
+        assert!(bus
+            .join_channel("nope", agent, ChannelVisibility::Full)
+            .is_err());
     }
 
     #[tokio::test]
@@ -475,11 +485,8 @@ mod tests {
 
         bus.send_dm(&agent1, &agent2, msg).await.unwrap();
 
-        let received = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx2.recv(),
-        ).await;
+        let received =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx2.recv()).await;
         assert!(received.is_ok());
     }
 }
-

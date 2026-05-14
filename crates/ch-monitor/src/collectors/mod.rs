@@ -1,7 +1,7 @@
 //! Metrics collectors
 
-pub mod system;
 pub mod gpu;
+pub mod system;
 
 use crate::Result;
 
@@ -10,7 +10,7 @@ use crate::Result;
 pub trait Collector: Send + Sync {
     /// Collect metrics
     async fn collect(&self) -> Result<crate::AgentMetrics>;
-    
+
     /// Get collector name
     fn name(&self) -> &str;
 }

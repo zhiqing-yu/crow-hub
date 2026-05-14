@@ -1,5 +1,5 @@
 //! Crow Hub Communication Protocol
-//! 
+//!
 //! This crate defines the core message types and communication protocol
 //! used for inter-agent communication in the Crow Hub system.
 
@@ -291,8 +291,8 @@ pub struct TokenMetrics {
 /// Performance metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
-    pub ttft_ms: u32,              // Time to first token
-    pub throughput_tps: f64,       // Tokens per second
+    pub ttft_ms: u32,        // Time to first token
+    pub throughput_tps: f64, // Tokens per second
     pub latency_p50_ms: u32,
     pub latency_p99_ms: u32,
 }
@@ -349,7 +349,7 @@ mod tests {
             MessageType::StatusHeartbeat,
             Payload::Empty,
         );
-        
+
         assert_eq!(msg.from.agent_name, "test-agent");
         assert!(msg.correlation_id.is_none());
     }
@@ -370,7 +370,7 @@ mod tests {
             priority: Priority::Normal,
             ttl: Some(50), // 50 seconds
         };
-        
+
         assert!(msg.is_expired());
     }
 }

@@ -2,11 +2,10 @@
 //!
 //! Scans configured hosts for running model servers.
 
-use crate::{ModelError, Result, BackendType};
 use crate::backends;
 use crate::registry::ModelRegistry;
+use crate::Result;
 use reqwest::Client;
-use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -98,16 +97,15 @@ impl AutoDiscovery {
 
                         info!(
                             "✓ Discovered {} at {}:{}",
-                            server_type.name(), host.address, port
+                            server_type.name(),
+                            host.address,
+                            port
                         );
 
                         // Create and register the appropriate backend
                         let backend: Arc<dyn crate::ModelBackend> = match server_type {
                             ServerType::Ollama => {
-                                Arc::new(backends::OllamaBackend::new(
-                                    &backend_name,
-                                    &base_url,
-                                ))
+                                Arc::new(backends::OllamaBackend::new(&backend_name, &base_url))
                             }
                             ServerType::OpenAICompat(ref _name) => {
                                 Arc::new(backends::OpenAICompatBackend::new(

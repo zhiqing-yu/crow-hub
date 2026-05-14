@@ -4,7 +4,7 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{info, error};
+use tracing::info;
 
 mod app;
 mod setup;
@@ -17,11 +17,11 @@ struct Cli {
     /// Configuration file path
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
-    
+
     /// Log level
     #[arg(short, long, default_value = "info")]
     log_level: String,
-    
+
     /// Subcommand
     #[command(subcommand)]
     command: Option<Commands>,
@@ -31,48 +31,48 @@ struct Cli {
 enum Commands {
     /// Start the TUI interface (default)
     Tui,
-    
+
     /// Start the server
     Server {
         /// Run in background
         #[arg(short, long)]
         daemon: bool,
     },
-    
+
     /// Run a workflow file
     Run {
         /// Workflow file path
         workflow: PathBuf,
-        
+
         /// Dry run (validate only)
         #[arg(long)]
         dry_run: bool,
     },
-    
+
     /// Agent management
     Agent {
         #[command(subcommand)]
         command: AgentCommands,
     },
-    
+
     /// Show status
     Status {
         /// Output format
         #[arg(short, long, default_value = "table")]
         format: String,
     },
-    
+
     /// Send a message
     Send {
         /// Target agent
         #[arg(short, long)]
         to: String,
-        
+
         /// Message content
         #[arg(short, long)]
         message: String,
     },
-    
+
     /// Run the setup wizard (re-scan environment)
     Setup,
 
@@ -106,28 +106,28 @@ enum Commands {
 enum AgentCommands {
     /// List all agents
     List,
-    
+
     /// Add a new agent
     Add {
         /// Agent name
         #[arg(short, long)]
         name: String,
-        
+
         /// Adapter type
         #[arg(short, long)]
         adapter: String,
-        
+
         /// Configuration file
         #[arg(short, long)]
         config: Option<PathBuf>,
     },
-    
+
     /// Remove an agent
     Remove {
         /// Agent name or ID
         name: String,
     },
-    
+
     /// Show agent details
     Show {
         /// Agent name or ID
@@ -138,7 +138,7 @@ enum AgentCommands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    
+
     // Determine if we are starting the TUI
     let is_tui = match cli.command {
         None | Some(Commands::Tui) => true,
@@ -156,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
             .append(true)
             .open(&log_path)
             .unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
-        
+
         tracing_subscriber::fmt()
             .with_env_filter(&cli.log_level)
             .with_writer(std::sync::Arc::new(log_file))
@@ -167,16 +167,16 @@ async fn main() -> anyhow::Result<()> {
             .with_writer(std::io::stdout)
             .init();
     };
-    
+
     info!("Crow Hub TUI v{}", env!("CARGO_PKG_VERSION"));
-    
+
     // Load configuration
     let config = if let Some(config_path) = cli.config {
         ch_core::HubConfig::load(config_path)?
     } else {
         ch_core::HubConfig::load_default().unwrap_or_default()
     };
-    
+
     match cli.command {
         None | Some(Commands::Tui) => {
             let plugins_dir = ch_core::get_plugins_dir();
@@ -188,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
             info!("Starting TUI interface...");
             run_tui(config).await?;
         }
-        
+
         Some(Commands::Server { daemon }) => {
             info!("Starting server...");
             if daemon {
@@ -196,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
             }
             run_server(config).await?;
         }
-        
+
         Some(Commands::Run { workflow, dry_run }) => {
             info!("Running workflow: {:?}", workflow);
             if dry_run {
@@ -204,37 +204,38 @@ async fn main() -> anyhow::Result<()> {
             }
             run_workflow(config, workflow, dry_run).await?;
         }
-        
-        Some(Commands::Agent { command }) => {
-            match command {
-                AgentCommands::List => {
-                    list_agents(config).await?;
-                }
-                AgentCommands::Add { name, adapter, config: _ } => {
-                    add_agent(config, name, adapter).await?;
-                }
-                AgentCommands::Remove { name } => {
-                    remove_agent(config, name).await?;
-                }
-                AgentCommands::Show { name } => {
-                    show_agent(config, name).await?;
-                }
+
+        Some(Commands::Agent { command }) => match command {
+            AgentCommands::List => {
+                list_agents(config).await?;
             }
-        }
-        
+            AgentCommands::Add {
+                name,
+                adapter,
+                config: _,
+            } => {
+                add_agent(config, name, adapter).await?;
+            }
+            AgentCommands::Remove { name } => {
+                remove_agent(config, name).await?;
+            }
+            AgentCommands::Show { name } => {
+                show_agent(config, name).await?;
+            }
+        },
+
         Some(Commands::Status { format }) => {
             show_status(config, &format).await?;
         }
-        
+
         Some(Commands::Send { to, message }) => {
             send_message(config, to, message).await?;
         }
-        
+
         Some(Commands::Setup) => {
             info!("Running setup wizard...");
             setup::run_setup_wizard(&ch_core::get_plugins_dir().to_string_lossy())?;
         }
-
 
         Some(Commands::Doctor { agent, prompt }) => {
             let prompt = prompt.unwrap_or_else(|| "Say hello in one short sentence.".to_string());
@@ -250,8 +251,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
-    use ch_model::{ModelRegistry, ModelRouter};
     use ch_agent::AgentRuntime;
+    use ch_model::{ModelRegistry, ModelRouter};
     use ch_protocol::{AgentId, Payload};
     use std::sync::Arc;
 
@@ -264,9 +265,14 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
 
     // Initialize memory store and spawn writer
     let mut memory_config = ch_memory::SqliteConfig::default();
-    memory_config.path = ch_core::get_home_dir().join("messages.db").to_string_lossy().to_string();
-    let memory_store = Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
-    let _writer_handle = ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
+    memory_config.path = ch_core::get_home_dir()
+        .join("messages.db")
+        .to_string_lossy()
+        .to_string();
+    let memory_store =
+        Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
+    let _writer_handle =
+        ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
 
     let registry = Arc::new(ModelRegistry::new());
     let router = Arc::new(ModelRouter::new(registry.clone()));
@@ -279,7 +285,8 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
     let user_agent_id = AgentId::new();
     let bus_rx = hub.bus.subscribe(user_agent_id).await;
     let _ = hub.bus.create_channel("general");
-    hub.bus.join_channel("general", user_agent_id, ch_core::ChannelVisibility::Full)?;
+    hub.bus
+        .join_channel("general", user_agent_id, ch_core::ChannelVisibility::Full)?;
 
     // Pre-create the TUI response channel and bridge bus messages into it
     let (tx, response_rx) = tokio::sync::mpsc::channel::<(String, String)>(100);
@@ -288,13 +295,21 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
         let mut rx = bus_rx;
         while let Some(msg) = rx.recv().await {
             if let Payload::Text(ref text) = msg.payload {
-                let _ = tx_bridge.send((msg.from.agent_name.clone(), text.clone())).await;
+                let _ = tx_bridge
+                    .send((msg.from.agent_name.clone(), text.clone()))
+                    .await;
             }
         }
     });
 
     info!("Initializing ratatui interface...");
-    app::run_tui_app(agent_runtime.clone(), hub.bus.clone(), user_agent_id, tx, response_rx)?;
+    app::run_tui_app(
+        agent_runtime.clone(),
+        hub.bus.clone(),
+        user_agent_id,
+        tx,
+        response_rx,
+    )?;
 
     // Clean shutdown
     agent_runtime.stop_all().await;
@@ -303,17 +318,22 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
 }
 
 async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
-    use ch_model::{ModelRegistry, ModelRouter, AutoDiscovery};
     use ch_agent::AgentRuntime;
+    use ch_model::{AutoDiscovery, ModelRegistry, ModelRouter};
     use std::sync::Arc;
 
     let hub = ch_core::CrowHub::new(config).await?;
-    
+
     // Initialize memory store and spawn writer
     let mut memory_config = ch_memory::SqliteConfig::default();
-    memory_config.path = ch_core::get_home_dir().join("messages.db").to_string_lossy().to_string();
-    let memory_store = Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
-    let _writer_handle = ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
+    memory_config.path = ch_core::get_home_dir()
+        .join("messages.db")
+        .to_string_lossy()
+        .to_string();
+    let memory_store =
+        Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
+    let _writer_handle =
+        ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
 
     // Wire up the new v2 architecture
     info!("Initializing v2 Hub Architecture...");
@@ -321,12 +341,15 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
     // 1. Model Routing & Discovery
     let registry = Arc::new(ModelRegistry::new());
     let router = Arc::new(ModelRouter::new(registry.clone()));
-    
+
     // Start auto-discovery for local + Spark node
     info!("Starting multi-host model discovery...");
     let mut config = ch_model::discovery::DiscoveryConfig::default();
-    config.hosts.push(ch_model::discovery::HostConfig::remote("spark", "192.168.50.1"));
-    
+    config.hosts.push(ch_model::discovery::HostConfig::remote(
+        "spark",
+        "192.168.50.1",
+    ));
+
     let discovery = AutoDiscovery::new(config);
     let results = discovery.discover(&registry).await?;
     info!("Discovered {} local model servers", results.len());
@@ -335,7 +358,7 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
     info!("Initializing Agent Runtime...");
     let plugins_dir = ch_core::get_plugins_dir();
     let agent_runtime = AgentRuntime::new(router.clone(), hub.bus.clone(), plugins_dir);
-    
+
     // Load all plugins from disk
     agent_runtime.load_all().await?;
 
@@ -345,13 +368,13 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
     // Start the legacy hub
     hub.start().await?;
     info!("Server started. Press Ctrl+C to stop.");
-    
+
     tokio::signal::ctrl_c().await?;
     info!("Shutting down...");
-    
+
     agent_runtime.stop_all().await;
     hub.shutdown().await?;
-    
+
     Ok(())
 }
 
@@ -361,32 +384,47 @@ async fn run_workflow(
     dry_run: bool,
 ) -> anyhow::Result<()> {
     println!("Running workflow: {:?}", workflow_path);
-    
+
     if dry_run {
         println!("✓ Workflow validation passed");
         return Ok(());
     }
-    
+
     println!("Workflow execution is under development.");
     Ok(())
 }
 
 async fn list_agents(_config: ch_core::HubConfig) -> anyhow::Result<()> {
     use ch_agent::PluginLoader;
-    
+
     let loader = PluginLoader::new(ch_core::get_plugins_dir());
     let plugins = loader.scan()?;
 
-    println!("Registered Agents (from {}):", ch_core::get_plugins_dir().join("agents").display());
-    println!("{:<20} {:<15} {:<20} {}", "Name", "Driver", "Default Model", "Description");
+    println!(
+        "Registered Agents (from {}):",
+        ch_core::get_plugins_dir().join("agents").display()
+    );
+    println!(
+        "{:<20} {:<15} {:<20} {}",
+        "Name", "Driver", "Default Model", "Description"
+    );
     println!("{}", "-".repeat(80));
-    
+
     for plugin in plugins {
         let m = plugin.manifest;
-        let model = m.model.map(|m| m.default).unwrap_or_else(|| "-".to_string());
-        println!("{:<20} {:<15} {:<20} {}", m.agent.name, format!("{:?}", m.agent.driver), model, m.agent.description);
+        let model = m
+            .model
+            .map(|m| m.default)
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "{:<20} {:<15} {:<20} {}",
+            m.agent.name,
+            format!("{:?}", m.agent.driver),
+            model,
+            m.agent.description
+        );
     }
-    
+
     Ok(())
 }
 
@@ -395,18 +433,29 @@ async fn add_agent(
     name: String,
     adapter: String,
 ) -> anyhow::Result<()> {
-    println!("Adding agent: {} (adapter: {}) - Please add a manifest to {}/{}", name, adapter, ch_core::get_plugins_dir().join("agents").display(), name);
+    println!(
+        "Adding agent: {} (adapter: {}) - Please add a manifest to {}/{}",
+        name,
+        adapter,
+        ch_core::get_plugins_dir().join("agents").display(),
+        name
+    );
     Ok(())
 }
 
 async fn remove_agent(_config: ch_core::HubConfig, name: String) -> anyhow::Result<()> {
-    println!("Removing agent: {} - Please delete {}/{}", name, ch_core::get_plugins_dir().join("agents").display(), name);
+    println!(
+        "Removing agent: {} - Please delete {}/{}",
+        name,
+        ch_core::get_plugins_dir().join("agents").display(),
+        name
+    );
     Ok(())
 }
 
 async fn show_agent(_config: ch_core::HubConfig, name: String) -> anyhow::Result<()> {
     use ch_agent::PluginLoader;
-    
+
     let loader = PluginLoader::new(ch_core::get_plugins_dir());
     match loader.load_single(&name) {
         Ok(plugin) => {
@@ -433,7 +482,7 @@ async fn show_agent(_config: ch_core::HubConfig, name: String) -> anyhow::Result
 
 async fn show_status(_config: ch_core::HubConfig, format: &str) -> anyhow::Result<()> {
     use ch_agent::PluginLoader;
-    
+
     let loader = PluginLoader::new(ch_core::get_plugins_dir());
     let agent_count = loader.scan().map(|p| p.len()).unwrap_or(0);
 
@@ -449,7 +498,11 @@ async fn show_status(_config: ch_core::HubConfig, format: &str) -> anyhow::Resul
             println!("Crow Hub Status");
             println!("================");
             println!("Status:     🟢 Installed (v{})", env!("CARGO_PKG_VERSION"));
-            println!("Agents:     {} configured in {}", agent_count, ch_core::get_plugins_dir().join("agents").display());
+            println!(
+                "Agents:     {} configured in {}",
+                agent_count,
+                ch_core::get_plugins_dir().join("agents").display()
+            );
         }
     }
     Ok(())
@@ -511,7 +564,7 @@ async fn run_doctor(
     agent_name: String,
     prompt: String,
 ) -> anyhow::Result<()> {
-    use ch_agent::drivers::{AgentDriver, APIDriver, SubprocessDriver, TmuxDriver};
+    use ch_agent::drivers::{APIDriver, AgentDriver, SubprocessDriver, TmuxDriver};
     use ch_agent::manifest::DriverType;
     use ch_agent::PluginLoader;
     use ch_model::{ChatRequest, ModelRegistry, ModelRouter};
@@ -584,13 +637,21 @@ async fn run_doctor(
                 "Env:      {} vars, {} ms ({} mode)",
                 host_env.vars.len(),
                 env_started.elapsed().as_millis(),
-                if host_env.vars.is_empty() { "fallback" } else { "probed/cached" },
+                if host_env.vars.is_empty() {
+                    "fallback"
+                } else {
+                    "probed/cached"
+                },
             );
             if let Some(ref ss) = sub.setup_script {
                 println!("Setup:    {} chars", ss.len());
             }
             println!();
-            Arc::new(SubprocessDriver::with_env(&agent_name, sub.clone(), host_env))
+            Arc::new(SubprocessDriver::with_env(
+                &agent_name,
+                sub.clone(),
+                host_env,
+            ))
         }
         DriverType::Tmux => {
             let tmux = match manifest.tmux.as_ref() {

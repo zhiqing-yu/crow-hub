@@ -2,13 +2,15 @@
 //!
 //! Adapter for Anthropic's Claude API
 
-use crate::{AgentAdapter, AdapterConfig, AdapterError, Message, MessageRole, Response, Result, StreamChunk, Tool, UsageInfo, FinishReason};
-use ch_protocol::{AgentStatus, AgentState, HealthStatus, Capability};
+use crate::{
+    AdapterConfig, AdapterError, AgentAdapter, FinishReason, Message, Response, Result,
+    StreamChunk, Tool, UsageInfo,
+};
 use async_trait::async_trait;
+use ch_protocol::{AgentState, AgentStatus, Capability, HealthStatus};
+use futures::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use futures::Stream;
 
 /// Claude API adapter
 pub struct ClaudeAdapter {
@@ -42,23 +44,23 @@ impl Default for ClaudeAdapter {
 impl AgentAdapter for ClaudeAdapter {
     async fn init(&mut self, config: AdapterConfig) -> Result<()> {
         self.name = config.name;
-        
+
         if let Some(api_key) = config.settings.get("api_key") {
             self.api_key = api_key.as_str().unwrap_or("").to_string();
         }
-        
+
         if let Some(base_url) = config.settings.get("base_url") {
             self.base_url = base_url.as_str().unwrap_or(&self.base_url).to_string();
         }
-        
+
         if let Some(model) = config.settings.get("model") {
             self.model = model.as_str().unwrap_or(&self.model).to_string();
         }
-        
+
         Ok(())
     }
-    
-    async fn chat(&self, messages: Vec<Message>, _tools: Option<Vec<Tool>>) -> Result<Response> {
+
+    async fn chat(&self, _messages: Vec<Message>, _tools: Option<Vec<Tool>>) -> Result<Response> {
         // Placeholder implementation
         // In real implementation, this would call Anthropic's API
         Ok(Response {
@@ -72,11 +74,16 @@ impl AgentAdapter for ClaudeAdapter {
             finish_reason: FinishReason::Stop,
         })
     }
-    
-    async fn stream(&self, _messages: Vec<Message>) -> Result<Box<dyn Stream<Item = StreamChunk> + Send + Unpin>> {
-        Err(AdapterError::NotImplemented("Streaming not yet implemented".to_string()))
+
+    async fn stream(
+        &self,
+        _messages: Vec<Message>,
+    ) -> Result<Box<dyn Stream<Item = StreamChunk> + Send + Unpin>> {
+        Err(AdapterError::NotImplemented(
+            "Streaming not yet implemented".to_string(),
+        ))
     }
-    
+
     async fn status(&self) -> Result<AgentStatus> {
         Ok(AgentStatus {
             agent_id: ch_protocol::AgentId::new(),
@@ -90,7 +97,7 @@ impl AgentAdapter for ClaudeAdapter {
             },
         })
     }
-    
+
     async fn health_check(&self) -> Result<HealthStatus> {
         Ok(HealthStatus {
             healthy: true,
@@ -98,7 +105,7 @@ impl AgentAdapter for ClaudeAdapter {
             message: Some("Claude adapter is healthy".to_string()),
         })
     }
-    
+
     fn capabilities(&self) -> Vec<Capability> {
         vec![
             Capability {
@@ -115,11 +122,11 @@ impl AgentAdapter for ClaudeAdapter {
             },
         ]
     }
-    
+
     fn name(&self) -> &str {
         &self.name
     }
-    
+
     fn adapter_type(&self) -> &str {
         "claude"
     }

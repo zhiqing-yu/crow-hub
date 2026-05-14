@@ -45,10 +45,10 @@ impl HubConfig {
             .merge(Env::prefixed("AGENTHUB_"))
             .extract()
             .map_err(|e| crate::CoreError::Config(e.to_string()))?;
-        
+
         Ok(config)
     }
-    
+
     /// Load from default locations
     pub fn load_default() -> Result<Self> {
         // Try common config locations
@@ -59,14 +59,14 @@ impl HubConfig {
             "~/.config/crow-hub/config.toml",
             "/etc/crow-hub/config.toml",
         ];
-        
+
         for path in &paths {
             let expanded = shellexpand::tilde(path);
             if std::path::Path::new(expanded.as_ref()).exists() {
                 return Self::load(expanded.as_ref());
             }
         }
-        
+
         // Return default if no config found
         Ok(Self::default())
     }
@@ -148,7 +148,6 @@ impl Default for MemoryConfig {
     }
 }
 
-
 /// Monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {
@@ -187,7 +186,7 @@ pub struct AdapterConfig {
 
 // Helper for shell expansion
 mod shellexpand {
-    pub fn tilde(path: &str) -> std::borrow::Cow<str> {
+    pub fn tilde(path: &str) -> std::borrow::Cow<'_, str> {
         if path.starts_with("~/") {
             if let Ok(home) = std::env::var("HOME") {
                 return std::borrow::Cow::Owned(format!("{}{}", home, &path[1..]));

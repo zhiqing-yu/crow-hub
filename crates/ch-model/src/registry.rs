@@ -2,7 +2,7 @@
 //!
 //! Tracks available model backends and their models.
 
-use crate::{BackendInfo, BackendType, ModelBackend, ModelInfo, Result, ModelError};
+use crate::{BackendInfo, ModelBackend, ModelError, ModelInfo, Result};
 use chrono::Utc;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -47,12 +47,18 @@ impl ModelRegistry {
                 }
                 info!(
                     "Registered backend '{}' ({}) with {} models: {:?}",
-                    name, base_url, models.len(), model_ids
+                    name,
+                    base_url,
+                    models.len(),
+                    model_ids
                 );
                 model_ids
             }
             Err(e) => {
-                warn!("Backend '{}' registered but failed to list models: {}", name, e);
+                warn!(
+                    "Backend '{}' registered but failed to list models: {}",
+                    name, e
+                );
                 Vec::new()
             }
         };
@@ -102,7 +108,10 @@ impl ModelRegistry {
 
     /// List all registered backends
     pub fn list_backends(&self) -> Vec<BackendInfo> {
-        self.backend_info.iter().map(|e| e.value().clone()).collect()
+        self.backend_info
+            .iter()
+            .map(|e| e.value().clone())
+            .collect()
     }
 
     /// List all available models across all backends
@@ -139,7 +148,9 @@ impl ModelRegistry {
 
     /// Refresh a backend's model list
     pub async fn refresh(&self, name: &str) -> Result<()> {
-        let backend = self.backends.get(name)
+        let backend = self
+            .backends
+            .get(name)
             .ok_or_else(|| ModelError::BackendNotFound(name.to_string()))?
             .clone();
 
@@ -190,7 +201,10 @@ mod tests {
     fn test_extract_host() {
         assert_eq!(extract_host("http://localhost:1234"), "localhost");
         assert_eq!(extract_host("http://192.168.50.1:8000"), "192.168.50.1");
-        assert_eq!(extract_host("https://api.anthropic.com"), "api.anthropic.com");
+        assert_eq!(
+            extract_host("https://api.anthropic.com"),
+            "api.anthropic.com"
+        );
     }
 
     #[test]

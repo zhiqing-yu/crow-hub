@@ -36,8 +36,6 @@ pub fn needs_setup(plugins_dir: &str) -> bool {
     }
 }
 
-
-
 /// Run the interactive setup wizard. Returns Ok(true) if setup completed.
 pub fn run_setup_wizard(plugins_dir: &str) -> anyhow::Result<bool> {
     let mut stdout = io::stdout();
@@ -50,12 +48,14 @@ pub fn run_setup_wizard(plugins_dir: &str) -> anyhow::Result<bool> {
 
     // 1a & 1b: Local Environments (Native + WSL)
     let mut local_envs = Vec::new();
-    local_envs.push(ScanEnvironment::Native(EnvironmentScanner::detect_native_os()));
-    
+    local_envs.push(ScanEnvironment::Native(
+        EnvironmentScanner::detect_native_os(),
+    ));
+
     for d in EnvironmentScanner::detect_wsl_distros() {
         local_envs.push(ScanEnvironment::Wsl(d));
     }
-    
+
     let picked_local = run_local_env_picker(&mut stdout, local_envs)?;
     for env in picked_local {
         scan_targets.push(env);
@@ -64,7 +64,7 @@ pub fn run_setup_wizard(plugins_dir: &str) -> anyhow::Result<bool> {
     // 1c. Collect SSH
     let ssh_hosts = run_ssh_picker(&mut stdout, &scan_targets)?;
     for (host, user) in ssh_hosts {
-         scan_targets.push(ScanEnvironment::Ssh { host, user });
+        scan_targets.push(ScanEnvironment::Ssh { host, user });
     }
 
     // ── Step 2: Confirm & Scan ──
@@ -77,10 +77,7 @@ pub fn run_setup_wizard(plugins_dir: &str) -> anyhow::Result<bool> {
 
     println!("\n🔍 Scanning chosen environments...\n");
     let results = scanner.scan();
-    println!(
-        "\n✓ Found {} CLI agents\n",
-        results.agents.len()
-    );
+    println!("\n✓ Found {} CLI agents\n", results.agents.len());
 
     if results.agents.is_empty() {
         println!("No agents found.");
@@ -110,9 +107,10 @@ pub fn run_setup_wizard(plugins_dir: &str) -> anyhow::Result<bool> {
         }
     }
 
-
-
-    println!("\n✓ Created {} agent configuration(s) in plugins/agents/", count);
+    println!(
+        "\n✓ Created {} agent configuration(s) in plugins/agents/",
+        count
+    );
     println!("\nPress Enter to launch Crow Hub...");
     let _ = read_line();
 
@@ -128,12 +126,34 @@ fn run_local_env_picker(
     let mut cursor = 0;
 
     loop {
-        execute!(stdout, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
-        writeln!(stdout, "{}", "╔══════════════════════════════════════════════════════════════╗".cyan())?;
-        writeln!(stdout, "{}", "║             🌐 Welcome to Crow Hub Setup                   ║".cyan())?;
-        writeln!(stdout, "{}", "╚══════════════════════════════════════════════════════════════╝".cyan())?;
-        writeln!(stdout, "\n  We detected the following local environments on this system.")?;
-        writeln!(stdout, "  Which ones do you want to safely scan for AI agents?\n")?;
+        execute!(
+            stdout,
+            terminal::Clear(ClearType::All),
+            cursor::MoveTo(0, 0)
+        )?;
+        writeln!(
+            stdout,
+            "{}",
+            "╔══════════════════════════════════════════════════════════════╗".cyan()
+        )?;
+        writeln!(
+            stdout,
+            "{}",
+            "║             🌐 Welcome to Crow Hub Setup                   ║".cyan()
+        )?;
+        writeln!(
+            stdout,
+            "{}",
+            "╚══════════════════════════════════════════════════════════════╝".cyan()
+        )?;
+        writeln!(
+            stdout,
+            "\n  We detected the following local environments on this system."
+        )?;
+        writeln!(
+            stdout,
+            "  Which ones do you want to safely scan for AI agents?\n"
+        )?;
 
         for (i, env) in envs.iter().enumerate() {
             let checkbox = if selected[i] { "[x]" } else { "[ ]" };
@@ -145,14 +165,29 @@ fn run_local_env_picker(
             }
         }
 
-        writeln!(stdout, "\n  {} Toggle   {} Continue", "[Space]".green(), "[Enter]".cyan())?;
+        writeln!(
+            stdout,
+            "\n  {} Toggle   {} Continue",
+            "[Space]".green(),
+            "[Enter]".cyan()
+        )?;
         stdout.flush()?;
 
         if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press { continue; }
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
             match key.code {
-                KeyCode::Up => if cursor > 0 { cursor -= 1; },
-                KeyCode::Down => if cursor + 1 < envs.len() { cursor += 1; },
+                KeyCode::Up => {
+                    if cursor > 0 {
+                        cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if cursor + 1 < envs.len() {
+                        cursor += 1;
+                    }
+                }
                 KeyCode::Char(' ') => selected[cursor] = !selected[cursor],
                 KeyCode::Enter => break,
                 KeyCode::Esc => return Ok(Vec::new()),
@@ -163,7 +198,9 @@ fn run_local_env_picker(
 
     let mut chosen = Vec::new();
     for (i, d) in envs.into_iter().enumerate() {
-        if selected[i] { chosen.push(d); }
+        if selected[i] {
+            chosen.push(d);
+        }
     }
     Ok(chosen)
 }
@@ -182,24 +219,41 @@ fn run_ssh_picker(
             cursor::MoveTo(0, 0)
         )?;
 
-        writeln!(stdout, "{}", "╔══════════════════════════════════════════════════════════════╗".cyan())?;
-        writeln!(stdout, "{}", "║             🌐 Welcome to Crow Hub Setup                   ║".cyan())?;
-        writeln!(stdout, "{}", "╚══════════════════════════════════════════════════════════════╝".cyan())?;
+        writeln!(
+            stdout,
+            "{}",
+            "╔══════════════════════════════════════════════════════════════╗".cyan()
+        )?;
+        writeln!(
+            stdout,
+            "{}",
+            "║             🌐 Welcome to Crow Hub Setup                   ║".cyan()
+        )?;
+        writeln!(
+            stdout,
+            "{}",
+            "╚══════════════════════════════════════════════════════════════╝".cyan()
+        )?;
         writeln!(stdout)?;
         writeln!(stdout, "  Selected Environments:")?;
         for t in current_targets {
             match t {
                 ScanEnvironment::Native(os) => writeln!(stdout, "    • {} Native", os)?,
                 ScanEnvironment::Wsl(d) => writeln!(stdout, "    • WSL: {}", d)?,
-                ScanEnvironment::Ssh { host, user } => writeln!(stdout, "    • SSH: {}@{}", user, host)?,
+                ScanEnvironment::Ssh { host, user } => {
+                    writeln!(stdout, "    • SSH: {}@{}", user, host)?
+                }
             }
         }
         for (h, u) in &hosts {
-             writeln!(stdout, "    • SSH: {}@{}", u, h)?;
+            writeln!(stdout, "    • SSH: {}@{}", u, h)?;
         }
-        
+
         writeln!(stdout)?;
-        writeln!(stdout, "  Do you want to add any SSH-connected remote machines?")?;
+        writeln!(
+            stdout,
+            "  Do you want to add any SSH-connected remote machines?"
+        )?;
         writeln!(stdout)?;
         writeln!(stdout, "  {} Add SSH host", "[a]".green())?;
         writeln!(stdout, "  {} Continue to scan", "[Enter]".cyan())?;
@@ -207,7 +261,9 @@ fn run_ssh_picker(
         stdout.flush()?;
 
         if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press { continue; }
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
             match key.code {
                 KeyCode::Char('a') | KeyCode::Char('A') => {
                     terminal::disable_raw_mode()?;
@@ -246,14 +302,18 @@ fn run_ssh_picker(
 /// Draw a "scanning..." screen confirms exactly what is scanned
 fn draw_scanning_screen(
     stdout: &mut io::Stdout,
-    targets: &[ScanEnvironment]
+    targets: &[ScanEnvironment],
 ) -> anyhow::Result<()> {
     execute!(
         stdout,
         terminal::Clear(ClearType::All),
         cursor::MoveTo(0, 2)
     )?;
-    writeln!(stdout, "  Ready to scan {} environments for AI agents:", targets.len().to_string().cyan())?;
+    writeln!(
+        stdout,
+        "  Ready to scan {} environments for AI agents:",
+        targets.len().to_string().cyan()
+    )?;
     for t in targets {
         writeln!(stdout, "   • {}", t)?;
     }
@@ -277,9 +337,10 @@ fn run_selection_screen(
             cursor::MoveTo(0, 0)
         )?;
 
-        writeln!(stdout, "{}",
-            "  Select agents to enable (Space=toggle, Enter=confirm, a=select all)"
-                .cyan()
+        writeln!(
+            stdout,
+            "{}",
+            "  Select agents to enable (Space=toggle, Enter=confirm, a=select all)".cyan()
         )?;
         writeln!(stdout)?;
 
@@ -300,7 +361,9 @@ fn run_selection_screen(
             }
 
             for (env_label, indices) in &env_groups {
-                writeln!(stdout, "  ┌─ {} ─────────────────────────────────────┐",
+                writeln!(
+                    stdout,
+                    "  ┌─ {} ─────────────────────────────────────┐",
                     env_label.clone().green()
                 )?;
 
@@ -324,12 +387,12 @@ fn run_selection_screen(
             }
         }
 
-
-
         let selected_count = results.agents.iter().filter(|a| a.selected).count();
 
         writeln!(stdout)?;
-        writeln!(stdout, "  {} selected  |  {} Toggle  {} Confirm  {} All  {} Quit",
+        writeln!(
+            stdout,
+            "  {} selected  |  {} Toggle  {} Confirm  {} All  {} Quit",
             selected_count,
             "[Space]".green(),
             "[Enter]".cyan(),
@@ -368,7 +431,6 @@ fn run_selection_screen(
                     for a in &mut results.agents {
                         a.selected = new_state;
                     }
-
                 }
                 KeyCode::Enter => {
                     break;

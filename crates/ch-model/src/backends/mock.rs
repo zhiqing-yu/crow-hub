@@ -3,8 +3,8 @@
 //! Returns configurable responses without any network calls. Used for testing.
 
 use crate::{
-    BackendType, ChatRequest, ChatResponse, FinishReason,
-    ModelBackend, ModelInfo, Result, TokenUsage,
+    BackendType, ChatRequest, ChatResponse, FinishReason, ModelBackend, ModelInfo, Result,
+    TokenUsage,
 };
 use chrono::Utc;
 use parking_lot::RwLock;
@@ -61,7 +61,11 @@ impl ModelBackend for MockBackend {
         };
 
         // Simulate token usage
-        let input_tokens = request.messages.iter().map(|m| m.content.len() as u64 / 4).sum();
+        let input_tokens = request
+            .messages
+            .iter()
+            .map(|m| m.content.len() as u64 / 4)
+            .sum();
         let output_tokens = content.len() as u64 / 4;
 
         Ok(ChatResponse {

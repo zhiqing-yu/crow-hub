@@ -25,7 +25,7 @@ impl Collector for SystemCollector {
     async fn collect(&self) -> Result<AgentMetrics> {
         // In a real implementation, this would use sysinfo or similar
         // to collect actual system metrics
-        
+
         Ok(AgentMetrics {
             agent_id: "system".to_string(),
             agent_name: "System".to_string(),
@@ -56,7 +56,7 @@ impl Collector for SystemCollector {
             latency_avg_ms: 0.0,
         })
     }
-    
+
     fn name(&self) -> &str {
         "system"
     }

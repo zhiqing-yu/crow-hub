@@ -30,7 +30,7 @@ impl Exporter for ConsoleExporter {
         info!("Active Agents: {}", snapshot.system.active_agents);
         info!("Total Tokens: {}", snapshot.system.total_tokens);
         info!("Total Cost: ${:.4}", snapshot.system.total_cost_usd);
-        
+
         for agent in &snapshot.agents {
             info!(
                 "Agent {}: {} tokens, ${:.4} cost, {} requests",
@@ -40,10 +40,10 @@ impl Exporter for ConsoleExporter {
                 agent.requests_total
             );
         }
-        
+
         Ok(())
     }
-    
+
     fn name(&self) -> &str {
         "console"
     }
