@@ -253,12 +253,7 @@ impl Default for HostEnvCache {
 }
 
 fn home_cache_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        PathBuf::from(home).join(".crow-hub").join("env-cache")
-    } else {
-        // Fallback for environments with no HOME — use the system tempdir.
-        std::env::temp_dir().join("crow-hub-env-cache")
-    }
+    ch_core::get_home_dir().join("env-cache")
 }
 
 // ── Probe ────────────────────────────────────────────────────

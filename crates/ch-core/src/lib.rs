@@ -18,9 +18,25 @@ pub use config::HubConfig;
 pub use orchestrator::Orchestrator;
 pub use registry::AgentRegistry;
 pub use session::SessionManager;
+use std::path::PathBuf;
 
 /// Result type for core operations
 pub type Result<T> = std::result::Result<T, CoreError>;
+
+/// Get the base directory for Crow Hub state (~/.crow-hub).
+pub fn get_home_dir() -> PathBuf {
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        PathBuf::from(home).join(".crow-hub")
+    } else {
+        // Fallback for environments with no HOME — use the system tempdir.
+        std::env::temp_dir().join("crow-hub")
+    }
+}
+
+/// Get the directory for agent plugins.
+pub fn get_plugins_dir() -> PathBuf {
+    get_home_dir().join("plugins")
+}
 
 /// Core error types
 #[derive(thiserror::Error, Debug, Clone)]

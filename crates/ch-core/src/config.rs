@@ -53,10 +53,11 @@ impl HubConfig {
     pub fn load_default() -> Result<Self> {
         // Try common config locations
         let paths = [
-            "./agenthub.toml",
-            "./config/agenthub.toml",
-            "~/.config/agenthub/config.toml",
-            "/etc/agenthub/config.toml",
+            "./crow-hub.toml",
+            "./config/crow-hub.toml",
+            "~/.crow-hub/config.toml",
+            "~/.config/crow-hub/config.toml",
+            "/etc/crow-hub/config.toml",
         ];
         
         for path in &paths {
@@ -137,14 +138,16 @@ pub struct MemoryConfig {
 
 impl Default for MemoryConfig {
     fn default() -> Self {
+        let db_path = crate::get_home_dir().join("memory.db");
         Self {
             backend: "sqlite".to_string(),
-            connection: "./data/memory.db".to_string(),
+            connection: db_path.to_string_lossy().to_string(),
             embedding_model: "local".to_string(),
             max_entries: 10000,
         }
     }
 }
+
 
 /// Monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -147,11 +147,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize logging: file for TUI (to prevent corruption), stdout for CLI/Server
     if is_tui {
+        let log_path = ch_core::get_home_dir().join("crow-hub.log");
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("crow-hub.log")
-            .unwrap_or_else(|_| std::fs::File::create("crow-hub.log").unwrap());
+            .open(&log_path)
+            .unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
         
         tracing_subscriber::fmt()
             .with_env_filter(&cli.log_level)
@@ -175,10 +179,11 @@ async fn main() -> anyhow::Result<()> {
     
     match cli.command {
         None | Some(Commands::Tui) => {
+            let plugins_dir = ch_core::get_plugins_dir();
             // Check for first-run: if no agents configured, run setup wizard
-            if setup::needs_setup("plugins") {
+            if setup::needs_setup(&plugins_dir.to_string_lossy()) {
                 info!("First run detected — launching setup wizard...");
-                setup::run_setup_wizard("plugins")?;
+                setup::run_setup_wizard(&plugins_dir.to_string_lossy())?;
             }
             info!("Starting TUI interface...");
             run_tui(config).await?;
@@ -227,8 +232,9 @@ async fn main() -> anyhow::Result<()> {
         
         Some(Commands::Setup) => {
             info!("Running setup wizard...");
-            setup::run_setup_wizard("plugins")?;
+            setup::run_setup_wizard(&ch_core::get_plugins_dir().to_string_lossy())?;
         }
+
 
         Some(Commands::Doctor { agent, prompt }) => {
             let prompt = prompt.unwrap_or_else(|| "Say hello in one short sentence.".to_string());
@@ -259,7 +265,8 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
     let registry = Arc::new(ModelRegistry::new());
     let router = Arc::new(ModelRouter::new(registry.clone()));
 
-    let agent_runtime = Arc::new(AgentRuntime::new(router, hub.bus.clone(), "plugins"));
+    let plugins_dir = ch_core::get_plugins_dir();
+    let agent_runtime = Arc::new(AgentRuntime::new(router, hub.bus.clone(), plugins_dir));
     agent_runtime.load_all().await?;
 
     // Subscribe a "user" identity to the bus for the TUI
@@ -314,7 +321,8 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
 
     // 2. Agent Plugin System
     info!("Initializing Agent Runtime...");
-    let agent_runtime = AgentRuntime::new(router.clone(), hub.bus.clone(), "plugins");
+    let plugins_dir = ch_core::get_plugins_dir();
+    let agent_runtime = AgentRuntime::new(router.clone(), hub.bus.clone(), plugins_dir);
     
     // Load all plugins from disk
     agent_runtime.load_all().await?;
@@ -354,10 +362,10 @@ async fn run_workflow(
 async fn list_agents(_config: ch_core::HubConfig) -> anyhow::Result<()> {
     use ch_agent::PluginLoader;
     
-    let loader = PluginLoader::new("plugins");
+    let loader = PluginLoader::new(ch_core::get_plugins_dir());
     let plugins = loader.scan()?;
 
-    println!("Registered Agents (from plugins/agents):");
+    println!("Registered Agents (from {}):", ch_core::get_plugins_dir().join("agents").display());
     println!("{:<20} {:<15} {:<20} {}", "Name", "Driver", "Default Model", "Description");
     println!("{}", "-".repeat(80));
     
@@ -375,19 +383,19 @@ async fn add_agent(
     name: String,
     adapter: String,
 ) -> anyhow::Result<()> {
-    println!("Adding agent: {} (adapter: {}) - Please add a manifest to plugins/agents/{}", name, adapter, name);
+    println!("Adding agent: {} (adapter: {}) - Please add a manifest to {}/{}", name, adapter, ch_core::get_plugins_dir().join("agents").display(), name);
     Ok(())
 }
 
 async fn remove_agent(_config: ch_core::HubConfig, name: String) -> anyhow::Result<()> {
-    println!("Removing agent: {} - Please delete plugins/agents/{}", name, name);
+    println!("Removing agent: {} - Please delete {}/{}", name, ch_core::get_plugins_dir().join("agents").display(), name);
     Ok(())
 }
 
 async fn show_agent(_config: ch_core::HubConfig, name: String) -> anyhow::Result<()> {
     use ch_agent::PluginLoader;
     
-    let loader = PluginLoader::new("plugins");
+    let loader = PluginLoader::new(ch_core::get_plugins_dir());
     match loader.load_single(&name) {
         Ok(plugin) => {
             let m = plugin.manifest;
@@ -414,7 +422,7 @@ async fn show_agent(_config: ch_core::HubConfig, name: String) -> anyhow::Result
 async fn show_status(_config: ch_core::HubConfig, format: &str) -> anyhow::Result<()> {
     use ch_agent::PluginLoader;
     
-    let loader = PluginLoader::new("plugins");
+    let loader = PluginLoader::new(ch_core::get_plugins_dir());
     let agent_count = loader.scan().map(|p| p.len()).unwrap_or(0);
 
     match format {
@@ -429,7 +437,7 @@ async fn show_status(_config: ch_core::HubConfig, format: &str) -> anyhow::Resul
             println!("Crow Hub Status");
             println!("================");
             println!("Status:     🟢 Installed (v{})", env!("CARGO_PKG_VERSION"));
-            println!("Agents:     {} configured in plugins/agents/", agent_count);
+            println!("Agents:     {} configured in {}", agent_count, ch_core::get_plugins_dir().join("agents").display());
         }
     }
     Ok(())
@@ -503,7 +511,7 @@ async fn run_doctor(
     println!();
 
     // 1. Load the manifest
-    let loader = PluginLoader::new("plugins");
+    let loader = PluginLoader::new(ch_core::get_plugins_dir());
     let plugin = match loader.load_single(&agent_name) {
         Ok(p) => p,
         Err(e) => {

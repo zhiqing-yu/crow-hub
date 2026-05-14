@@ -63,6 +63,7 @@ fn compose_remote_invocation(
     prompt: Option<&str>,
     host_env: &HostEnv,
     setup_script: Option<&str>,
+    working_dir: Option<&str>,
 ) -> String {
     // 1. Build the `env KEY=VAL ...` prefix from the cached host env.
     let mut env_parts: Vec<String> = host_env
@@ -78,37 +79,38 @@ fn compose_remote_invocation(
         .map(|s| shell_quote(&s))
         .collect();
 
-    match setup_script {
-        // No setup script — just `env KEY=VAL ... cmd args`.  The remote
-        // shell runs this directly; no bash wrapper needed.  If env_parts is
-        // empty (e.g. probe failed), this collapses to just `cmd args` which
-        // also works (relying on the remote shell's default PATH).
-        None => {
-            let mut all = Vec::with_capacity(1 + env_parts.len() + cmd_parts.len());
-            if !env_parts.is_empty() {
-                all.push("env".to_string());
-                all.append(&mut env_parts);
-            }
-            all.append(&mut cmd_parts);
-            all.join(" ")
+    let mut prelude = Vec::new();
+    if let Some(dir) = working_dir {
+        prelude.push(format!("cd {}", shell_quote(dir)));
+    }
+    if let Some(script) = setup_script {
+        prelude.push(script.trim().to_string());
+    }
+
+    if prelude.is_empty() {
+        // No setup script or working dir — just `env KEY=VAL ... cmd args`.
+        let mut all = Vec::with_capacity(1 + env_parts.len() + cmd_parts.len());
+        if !env_parts.is_empty() {
+            all.push("env".to_string());
+            all.append(&mut env_parts);
         }
-        // With setup script — wrap in bash -c so the script can use shell
-        // builtins (source, alias, function, etc.).  The `env` prefix still
-        // applies so the bash invocation itself sees the cached PATH.
-        Some(script) => {
-            let inner = format!("{}; exec {}", script.trim(), cmd_parts.join(" "));
-            let mut all = Vec::with_capacity(env_parts.len() + 4);
-            if !env_parts.is_empty() {
-                all.push("env".to_string());
-                all.append(&mut env_parts);
-            }
-            all.push("bash".to_string());
-            all.push("-c".to_string());
-            all.push(shell_quote(&inner));
-            all.join(" ")
+        all.append(&mut cmd_parts);
+        all.join(" ")
+    } else {
+        // Wrap in bash -c so we can cd and run setup script.
+        let inner = format!("{}; exec {}", prelude.join(" && "), cmd_parts.join(" "));
+        let mut all = Vec::with_capacity(env_parts.len() + 4);
+        if !env_parts.is_empty() {
+            all.push("env".to_string());
+            all.append(&mut env_parts);
         }
+        all.push("bash".to_string());
+        all.push("-c".to_string());
+        all.push(shell_quote(&inner));
+        all.join(" ")
     }
 }
+
 
 /// Driver that spawns CLI agents as subprocesses
 pub struct SubprocessDriver {
@@ -182,6 +184,7 @@ impl SubprocessDriver {
                     prompt,
                     &self.host_env,
                     self.config.setup_script.as_deref(),
+                    self.config.working_dir.as_deref(),
                 );
                 let mut cmd = Command::new("wsl.exe");
                 // Avoid polluting WSL path with Windows paths by clearing WSLENV
@@ -207,8 +210,10 @@ impl SubprocessDriver {
                     prompt,
                     &self.host_env,
                     self.config.setup_script.as_deref(),
+                    self.config.working_dir.as_deref(),
                 );
                 let mut cmd = Command::new("ssh");
+
                 // Match the scanner's SSH options so connections never prompt
                 // and fail fast on first-connect host-key prompts.
                 cmd.args([
@@ -755,6 +760,7 @@ mod tests {
             Some("hello world"),
             &fake_env(),
             None,
+            None,
         );
 
         // env prefix is present and assigns each captured var
@@ -781,6 +787,7 @@ mod tests {
             None,
             &HostEnv::new(),
             None,
+            None,
         );
         assert_eq!(s, "/usr/local/bin/claude");
     }
@@ -792,6 +799,7 @@ mod tests {
             &[],
             None,
             &fake_env(),
+            None,
             None,
         );
         assert!(s.ends_with("/usr/local/bin/claude"));
@@ -806,6 +814,7 @@ mod tests {
             Some("it's me"),
             &fake_env(),
             None,
+            None,
         );
         // Single quote inside the prompt is properly POSIX-escaped
         assert!(s.contains(r"'it'\''s me'"), "got: {}", s);
@@ -819,6 +828,7 @@ mod tests {
             Some("hi"),
             &fake_env(),
             Some("source ~/venv/bin/activate"),
+            None,
         );
         // Must include the env prefix, then `bash -c '<setup>; exec <cmd>'`
         assert!(s.starts_with("env "));
@@ -837,12 +847,28 @@ mod tests {
             None,
             &fake_env(),
             Some("export FOO='it'\\''s'"),
+            None,
         );
         // The full bash -c argument is single-quoted, so the inner single
         // quotes get the POSIX `'\''` escape.  Just verify it parses without
         // panic and that the wrapper structure is intact.
         assert!(s.contains("bash -c"));
         assert!(s.contains("/bin/true"));
+    }
+
+    #[test]
+    fn compose_remote_invocation_with_working_dir_includes_cd() {
+        let s = compose_remote_invocation(
+            "/bin/ls",
+            &[],
+            None,
+            &fake_env(),
+            None,
+            Some("/tmp/project"),
+        );
+        // Must include `cd /tmp/project && exec /bin/ls`
+        assert!(s.contains("cd /tmp/project"));
+        assert!(s.contains("exec /bin/ls"));
     }
 
     // ── build_command ──────────────────────────────────────────
