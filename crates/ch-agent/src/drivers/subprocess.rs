@@ -388,6 +388,18 @@ impl SubprocessDriver {
 
         None
     }
+
+    /// Estimate token count from text when the agent doesn't report usage.
+    /// Uses a simple heuristic: ~4 chars/token for ASCII (English/code),
+    /// ~1.5 chars/token for CJK.  Returns 0 for empty input.
+    fn estimate_tokens(&self, text: &str) -> u64 {
+        if text.is_empty() {
+            return 0;
+        }
+        let ascii = text.chars().filter(|c| c.is_ascii()).count() as f64;
+        let non_ascii = text.chars().count() as f64 - ascii;
+        (ascii / 4.0 + non_ascii / 1.5).ceil() as u64
+    }
 }
 
 #[async_trait::async_trait]
@@ -480,9 +492,17 @@ impl AgentDriver for SubprocessDriver {
             let content = self.process_output(&combined_output);
             let usage = if self.config.output_mode == SubprocessOutputMode::Json {
                 self.extract_usage_from_json(&combined_output)
-                    .unwrap_or_default()
+                    .unwrap_or_else(|| TokenUsage {
+                        input_tokens: self.estimate_tokens(&prompt),
+                        output_tokens: self.estimate_tokens(&content),
+                        total_tokens: self.estimate_tokens(&prompt) + self.estimate_tokens(&content),
+                    })
             } else {
-                TokenUsage::default()
+                TokenUsage {
+                    input_tokens: self.estimate_tokens(&prompt),
+                    output_tokens: self.estimate_tokens(&content),
+                    total_tokens: self.estimate_tokens(&prompt) + self.estimate_tokens(&content),
+                }
             };
 
             // Even on clean exit, if content is empty and stderr had something,
@@ -1064,5 +1084,56 @@ mod tests {
         let combined = format!("some stderr\n{}", raw_json);
         let processed = driver.process_output(&combined);
         assert_eq!(processed, "Hey Z!");
+    }
+
+    // ── estimate_tokens ────────────────────────────────────────
+
+    fn dummy_driver() -> SubprocessDriver {
+        SubprocessDriver::new(
+            "test",
+            SubprocessSection {
+                command: "echo".into(),
+                args: vec![],
+                working_dir: None,
+                shell: ShellType::Native,
+                wsl_distro: None,
+                ssh_host: None,
+                ssh_user: None,
+                ssh_key: None,
+                env: std::collections::HashMap::new(),
+                input_mode: SubprocessInputMode::Argv,
+                output_mode: SubprocessOutputMode::Json,
+                output_filter: None,
+                setup_script: None,
+            },
+        )
+    }
+
+    #[test]
+    fn estimate_tokens_empty() {
+        let d = dummy_driver();
+        assert_eq!(d.estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn estimate_tokens_ascii() {
+        let d = dummy_driver();
+        // "hello world" = 11 chars → ~3 tokens
+        assert_eq!(d.estimate_tokens("hello world"), 3);
+    }
+
+    #[test]
+    fn estimate_tokens_chinese() {
+        let d = dummy_driver();
+        // "你好世界" = 4 Chinese chars → ~3 tokens (4/1.5=2.67→3)
+        assert_eq!(d.estimate_tokens("你好世界"), 3);
+    }
+
+    #[test]
+    fn estimate_tokens_long_english() {
+        let d = dummy_driver();
+        // "hello" * 8 = 40 chars → 10 tokens
+        let text = "hellohellohellohellohellohellohellohello";
+        assert_eq!(d.estimate_tokens(text), 10);
     }
 }
