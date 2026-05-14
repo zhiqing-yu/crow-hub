@@ -259,9 +259,16 @@ impl AgentRuntime {
                         let mut any_chunk_sent = false;
                         let mut first_chunk_latency_ms: Option<u64> = None;
                         let mut errored = false;
+                        let mut last_usage: Option<ch_model::TokenUsage> = None;
                         while let Some(chunk_res) = stream.next().await {
                             match chunk_res {
                                 Ok(chunk) => {
+                                    if chunk.content.is_empty() && chunk.usage.is_none() {
+                                        continue;
+                                    }
+                                    if chunk.usage.is_some() {
+                                        last_usage = chunk.usage;
+                                    }
                                     if chunk.content.is_empty() {
                                         continue;
                                     }
@@ -331,10 +338,27 @@ impl AgentRuntime {
                                 },
                             );
                         } else if !errored {
+                            // Accumulate tokens from previous requests
+                            let (prev_in, prev_out) = match activities.get(&agent_name) {
+                                Some(entry) => match &*entry {
+                                    AgentActivity::Idle {
+                                        cumulative_tokens_in,
+                                        cumulative_tokens_out,
+                                        ..
+                                    } => (*cumulative_tokens_in, *cumulative_tokens_out),
+                                    _ => (0, 0),
+                                },
+                                _ => (0, 0),
+                            };
+                            let usage_ref = last_usage.as_ref();
+                            let new_in = usage_ref.map(|u| u.input_tokens).unwrap_or(0);
+                            let new_out = usage_ref.map(|u| u.output_tokens).unwrap_or(0);
                             activities.insert(
                                 agent_name.clone(),
                                 AgentActivity::Idle {
                                     last_latency_ms: first_chunk_latency_ms,
+                                    cumulative_tokens_in: prev_in + new_in,
+                                    cumulative_tokens_out: prev_out + new_out,
                                 },
                             );
                         }

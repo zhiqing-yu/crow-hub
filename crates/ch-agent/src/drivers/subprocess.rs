@@ -342,6 +342,52 @@ impl SubprocessDriver {
         // Fallback or Raw mode
         trimmed.to_string()
     }
+
+    /// Try to extract token usage from the raw JSON output of a CLI agent.
+    /// Probes common field paths used by different agents:
+    ///   - OpenClaw: `meta.usage.input` / `meta.usage.output`
+    ///   - Anthropic: `usage.input_tokens` / `usage.output_tokens`
+    ///   - OpenAI: `usage.prompt_tokens` / `usage.completion_tokens`
+    fn extract_usage_from_json(&self, raw_json: &str) -> Option<TokenUsage> {
+        let val: serde_json::Value = serde_json::from_str(raw_json).ok()?;
+
+        // OpenClaw shape: { meta: { usage: { input: N, output: M } } }
+        if let Some(meta) = val.get("meta") {
+            if let Some(usage) = meta.get("usage") {
+                let input = usage.get("input").and_then(|v| v.as_u64());
+                let output = usage.get("output").and_then(|v| v.as_u64());
+                if input.is_some() || output.is_some() {
+                    return Some(TokenUsage {
+                        input_tokens: input.unwrap_or(0),
+                        output_tokens: output.unwrap_or(0),
+                        total_tokens: input.unwrap_or(0) + output.unwrap_or(0),
+                    });
+                }
+            }
+        }
+
+        // Anthropic / OpenAI shape: { usage: { input_tokens, output_tokens } }
+        // or { usage: { prompt_tokens, completion_tokens } }
+        if let Some(usage) = val.get("usage") {
+            let input = usage
+                .get("input_tokens")
+                .or_else(|| usage.get("prompt_tokens"))
+                .and_then(|v| v.as_u64());
+            let output = usage
+                .get("output_tokens")
+                .or_else(|| usage.get("completion_tokens"))
+                .and_then(|v| v.as_u64());
+            if input.is_some() || output.is_some() {
+                return Some(TokenUsage {
+                    input_tokens: input.unwrap_or(0),
+                    output_tokens: output.unwrap_or(0),
+                    total_tokens: input.unwrap_or(0) + output.unwrap_or(0),
+                });
+            }
+        }
+
+        None
+    }
 }
 
 #[async_trait::async_trait]
@@ -432,6 +478,12 @@ impl AgentDriver for SubprocessDriver {
             }
 
             let content = self.process_output(&combined_output);
+            let usage = if self.config.output_mode == SubprocessOutputMode::Json {
+                self.extract_usage_from_json(&combined_output)
+                    .unwrap_or_default()
+            } else {
+                TokenUsage::default()
+            };
 
             // Even on clean exit, if content is empty and stderr had something,
             // fold that into the response so the user sees it rather than a
@@ -441,7 +493,7 @@ impl AgentDriver for SubprocessDriver {
                     content: format!("(agent produced no stdout; stderr: {})", filtered_stderr),
                     model: request.model,
                     backend: format!("subprocess/{}", self.name),
-                    usage: TokenUsage::default(),
+                    usage,
                     finish_reason: FinishReason::Stop,
                 });
             }
@@ -450,7 +502,7 @@ impl AgentDriver for SubprocessDriver {
                 content,
                 model: request.model,
                 backend: format!("subprocess/{}", self.name),
-                usage: TokenUsage::default(),
+                usage,
                 finish_reason: FinishReason::Stop,
             });
         }

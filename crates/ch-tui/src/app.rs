@@ -534,11 +534,20 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 fn render_activity(activity: &AgentActivity) -> (&'static str, Color, String) {
     match activity {
         AgentActivity::Unknown => ("○", Color::DarkGray, String::new()),
-        AgentActivity::Idle { last_latency_ms } => {
-            let suffix = match last_latency_ms {
+        AgentActivity::Idle {
+            last_latency_ms,
+            cumulative_tokens_in,
+            cumulative_tokens_out,
+        } => {
+            let mut suffix = match last_latency_ms {
                 Some(ms) => format_latency(*ms),
                 None => String::new(),
             };
+            // Append token counts if non-zero: "22k/0.3k"
+            if *cumulative_tokens_in > 0 || *cumulative_tokens_out > 0 {
+                use std::fmt::Write;
+                let _ = write!(suffix, " · {}/{}", format_tokens(*cumulative_tokens_in), format_tokens(*cumulative_tokens_out));
+            }
             ("●", Color::Green, suffix)
         }
         AgentActivity::Thinking { since } => {
@@ -606,6 +615,22 @@ fn format_latency(ms: u64) -> String {
     }
 }
 
+/// Format token count in compact form: 22279 → "22k", 284 → "0.3k".
+/// Returns empty string for 0 (caller should skip suffix).
+fn format_tokens(n: u64) -> String {
+    if n == 0 {
+        return String::new();
+    }
+    if n < 1000 {
+        return n.to_string();
+    }
+    if n < 10_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        format!("{}k", n / 1000)
+    }
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
@@ -660,9 +685,41 @@ mod tests {
     fn render_activity_idle_with_latency() {
         let (glyph, _, suffix) = render_activity(&AgentActivity::Idle {
             last_latency_ms: Some(780),
+            cumulative_tokens_in: 0,
+            cumulative_tokens_out: 0,
         });
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "780ms");
+    }
+
+    #[test]
+    fn render_activity_idle_with_tokens() {
+        let (glyph, _, suffix) = render_activity(&AgentActivity::Idle {
+            last_latency_ms: Some(18_600),
+            cumulative_tokens_in: 22279,
+            cumulative_tokens_out: 284,
+        });
+        assert_eq!(glyph, "●");
+        assert_eq!(suffix, "18.6s · 22k/284");
+    }
+
+    #[test]
+    fn render_activity_idle_no_tokens_when_zero() {
+        let (_, _, suffix) = render_activity(&AgentActivity::Idle {
+            last_latency_ms: Some(100),
+            cumulative_tokens_in: 0,
+            cumulative_tokens_out: 0,
+        });
+        assert!(!suffix.contains("·"), "no token suffix when both zero");
+    }
+
+    #[test]
+    fn format_tokens_compact() {
+        assert_eq!(format_tokens(0), "");
+        assert_eq!(format_tokens(284), "284");
+        assert_eq!(format_tokens(1000), "1.0k");
+        assert_eq!(format_tokens(22279), "22k");
+        assert_eq!(format_tokens(1500), "1.5k");
     }
 
     #[test]

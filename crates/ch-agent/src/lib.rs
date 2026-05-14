@@ -88,7 +88,12 @@ pub enum AgentActivity {
     Unknown,
     /// Agent is idle and ready.  `last_latency_ms` is the time from
     /// send to first response chunk on the most recent completed request.
-    Idle { last_latency_ms: Option<u64> },
+    /// Token counts are cumulative over the agent's session (reset on restart).
+    Idle {
+        last_latency_ms: Option<u64>,
+        cumulative_tokens_in: u64,
+        cumulative_tokens_out: u64,
+    },
     /// Agent is currently processing a request.
     Thinking { since: DateTime<Utc> },
     /// The last request errored or produced no chunks.
