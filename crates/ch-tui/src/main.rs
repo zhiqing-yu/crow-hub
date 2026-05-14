@@ -262,6 +262,12 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
     // Start the hub so the message bus is running before agents subscribe
     hub.start().await?;
 
+    // Initialize memory store and spawn writer
+    let mut memory_config = ch_memory::SqliteConfig::default();
+    memory_config.path = ch_core::get_home_dir().join("messages.db").to_string_lossy().to_string();
+    let memory_store = Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
+    let _writer_handle = ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
+
     let registry = Arc::new(ModelRegistry::new());
     let router = Arc::new(ModelRouter::new(registry.clone()));
 
@@ -303,6 +309,12 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
 
     let hub = ch_core::CrowHub::new(config).await?;
     
+    // Initialize memory store and spawn writer
+    let mut memory_config = ch_memory::SqliteConfig::default();
+    memory_config.path = ch_core::get_home_dir().join("messages.db").to_string_lossy().to_string();
+    let memory_store = Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
+    let _writer_handle = ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
+
     // Wire up the new v2 architecture
     info!("Initializing v2 Hub Architecture...");
 

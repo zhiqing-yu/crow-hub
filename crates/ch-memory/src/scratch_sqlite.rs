@@ -1,5 +1,5 @@
 use ch_protocol::MemoryEntry;
-use crate::{MemoryStore, MemoryFilter, ExportFormat, ImportResult, SqliteConfig, Result, MemoryError};
+use ch_memory::{MemoryStore, MemoryFilter, ExportFormat, ImportResult, SqliteConfig, Result, MemoryError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool, Row};
@@ -66,19 +66,6 @@ impl SqliteMemoryStore {
             updated_at: timestamp,
         })
     }
-    
-    /// Calculate cosine similarity between two vectors
-    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
-        if norm_a == 0.0 || norm_b == 0.0 {
-            0.0
-        } else {
-            dot_product / (norm_a * norm_b)
-        }
-    }
 }
 
 #[async_trait]
@@ -132,7 +119,7 @@ impl MemoryStore for SqliteMemoryStore {
         .await
         .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
-        Ok(memory.memory_id.clone())
+        Ok(memory.memory_id)
     }
 
     async fn read(&self, memory_id: &str) -> Result<MemoryEntry> {
@@ -248,63 +235,5 @@ impl MemoryStore for SqliteMemoryStore {
     async fn close(&self) -> Result<()> {
         self.pool.close().await;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ch_protocol::AgentId;
-
-    #[tokio::test]
-    async fn test_sqlite_store() {
-        let config = SqliteConfig {
-            path: ":memory:".to_string(),
-            embedding_dim: 768,
-        };
-        let store = SqliteMemoryStore::new(config).await.unwrap();
-        
-        // Test write
-        let memory = MemoryEntry {
-            memory_id: "test-1".to_string(),
-            agent_id: AgentId::new(),
-            session_id: "session-1".to_string(),
-            content: "Test memory content".to_string(),
-            embedding: None,
-            memory_type: "chat".to_string(),
-            metadata: Default::default(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        
-        let id = store.write(memory.clone()).await.unwrap();
-        assert_eq!(id, memory.memory_id);
-        
-        // Test read
-        let retrieved = store.read(&id).await.unwrap();
-        assert_eq!(retrieved.content, memory.content);
-        
-        // Test count
-        let count = store.count().await.unwrap();
-        assert_eq!(count, 1);
-        
-        // Test recent
-        let recent = store.recent("session-1", 10).await.unwrap();
-        assert_eq!(recent.len(), 1);
-        assert_eq!(recent[0].content, memory.content);
-        
-        // Test empty recent
-        let empty_recent = store.recent("session-2", 10).await.unwrap();
-        assert_eq!(empty_recent.len(), 0);
-    }
-
-    #[test]
-    fn test_cosine_similarity() {
-        let a = vec![1.0, 0.0, 0.0];
-        let b = vec![1.0, 0.0, 0.0];
-        assert!((SqliteMemoryStore::cosine_similarity(&a, &b) - 1.0).abs() < 0.001);
-        
-        let c = vec![0.0, 1.0, 0.0];
-        assert!(SqliteMemoryStore::cosine_similarity(&a, &c).abs() < 0.001);
     }
 }

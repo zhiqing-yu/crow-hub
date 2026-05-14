@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 ch-protocol = { path = "../ch-protocol" }
+ch-core = { path = "../ch-core" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -19,6 +20,7 @@ async-trait = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -11,6 +11,7 @@ use thiserror::Error;
 
 pub mod backends;
 pub mod embedder;
+pub mod writer;
 
 /// Memory error types
 #[derive(Error, Debug, Clone)]
@@ -111,6 +112,12 @@ pub trait MemoryStore: Send + Sync {
     
     /// Get memories for an agent
     async fn get_agent_memories(&self, agent_id: &str, limit: usize) -> Result<Vec<MemoryEntry>>;
+    
+    /// Get recent memories from a channel
+    async fn recent(&self, channel: &str, limit: usize) -> Result<Vec<MemoryEntry>>;
+    
+    /// Get memories by correlation ID
+    async fn by_correlation(&self, id: &str) -> Result<Vec<MemoryEntry>>;
     
     /// Update a memory entry
     async fn update(&self, memory_id: &str, content: &str) -> Result<()>;
