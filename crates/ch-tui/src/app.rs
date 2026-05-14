@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use ch_agent::{AgentActivity, AgentRuntime, AgentInfo};
@@ -38,6 +39,11 @@ pub struct App {
     pub input: String,
     pub messages: Vec<String>,
     pub selected_agent: usize,
+    /// Indices (into `agents`) of agents the user has multi-selected via
+    /// Space.  When non-empty, pressing Enter broadcasts the prompt to all
+    /// of them in parallel.  When empty, falls back to single-agent send
+    /// using `selected_agent`.
+    pub multi_selected: HashSet<usize>,
     pub should_quit: bool,
     pub response_rx: mpsc::Receiver<(String, String)>,
     pub tx: mpsc::Sender<(String, String)>,
@@ -64,6 +70,7 @@ impl App {
             input: String::new(),
             messages: vec!["Welcome to Crow Hub! Type to send a message.".to_string()],
             selected_agent: 0,
+            multi_selected: HashSet::new(),
             should_quit: false,
             response_rx,
             tx,
@@ -71,6 +78,28 @@ impl App {
             chat_scroll_offset: 0,
             input_scroll_offset: 0,
         }
+    }
+
+    /// Toggle the currently-cursored agent into / out of the multi-selection.
+    /// Bound to Space when the Agents panel is focused.
+    pub fn toggle_multi_select_current(&mut self) {
+        toggle_multi_select(&mut self.multi_selected, self.selected_agent, self.agents.len());
+    }
+
+    /// Clear the multi-selection.  Bound to Backspace when the Agents
+    /// panel is focused (Backspace still deletes input characters on other
+    /// panels — context-sensitive).
+    pub fn clear_multi_select(&mut self) {
+        self.multi_selected.clear();
+    }
+
+    /// Resolve the names of the agents that should receive the next
+    /// prompt.  If anything is multi-selected, those are the targets
+    /// (sorted by index for deterministic order); otherwise fall back to
+    /// the single primary cursor.
+    pub fn current_send_targets(&self) -> Vec<String> {
+        let agent_names: Vec<&str> = self.agents.iter().map(|a| a.name.as_str()).collect();
+        resolve_send_targets(&agent_names, &self.multi_selected, self.selected_agent)
     }
 
     pub fn on_tick(&mut self) {
@@ -107,8 +136,14 @@ pub fn run_tui_app(
     // interactions, and some terminals (notably the Antigravity-integrated
     // terminal) leak the mouse-tracking escape sequences (ESC[M…, ESC[<…M)
     // into the input as literal `[` characters when the mouse moves.
-    // Update: User specifically requested mouse scrolling, so we will enable it.
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
+    // Update: User specifically requested mouse scrolling, so we will enable it
+    // by default, but allow disabling it via CROW_NO_MOUSE=1 for Antigravity.
+    let enable_mouse = std::env::var("CROW_NO_MOUSE").map(|v| v != "1" && v != "true").unwrap_or(true);
+    if enable_mouse {
+        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
+    } else {
+        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+    }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -118,12 +153,21 @@ pub fn run_tui_app(
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableBracketedPaste,
-        DisableMouseCapture
-    )?;
+    if enable_mouse {
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableBracketedPaste,
+            DisableMouseCapture
+        )?;
+    } else {
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableBracketedPaste
+        )?;
+    }
+
     terminal.show_cursor()?;
 
     if let Err(err) = res {
@@ -222,11 +266,26 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 }
                             }
                         }
+                        KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents => {
+                            // Space on Agents panel = toggle multi-select on
+                            // the cursored agent.  Pressing Enter while any
+                            // agents are multi-selected broadcasts the prompt
+                            // to all of them in parallel.
+                            app.toggle_multi_select_current();
+                        }
                         KeyCode::Char(c) => {
                             app.input.push(c);
                         }
                         KeyCode::Backspace => {
-                            app.input.pop();
+                            // Context-sensitive: Backspace clears the multi-
+                            // selection if the Agents panel is focused; on
+                            // any other panel it deletes a character from
+                            // the input field.
+                            if app.focused_panel == FocusedPanel::Agents {
+                                app.clear_multi_select();
+                            } else {
+                                app.input.pop();
+                            }
                         }
                         KeyCode::Enter => {
                             if is_fast {
@@ -237,42 +296,26 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 let prompt = app.input.clone();
                                 app.messages.push(format!("You: {}", prompt));
 
-                                let agent_name = if !app.agents.is_empty() {
-                                    app.agents[app.selected_agent].name.clone()
-                                } else {
-                                    "System".to_string()
-                                };
+                                // Resolve targets: multi-selection wins if
+                                // non-empty; otherwise single cursor.
+                                let targets = app.current_send_targets();
 
-                                // Build the message and route through the bus
                                 let bus = app.bus.clone();
                                 let user_id = app.user_agent_id;
+                                let runtime = app.runtime.clone();
 
-                                // Resolve the selected agent's bus identity
-                                let target_addr = app.runtime.get_agent_id(&agent_name)
-                                    .map(|id| AgentAddress {
-                                        agent_id: id,
-                                        agent_name: agent_name.clone(),
-                                        adapter_type: "agent".to_string(),
-                                    });
-
-                                let from_addr = AgentAddress {
-                                    agent_id: user_id,
-                                    agent_name: "You".to_string(),
-                                    adapter_type: "tui".to_string(),
-                                };
-
-                                let bus_msg = AgentMessage::new(
-                                    from_addr,
-                                    target_addr,
-                                    MessageType::TaskRequest,
-                                    Payload::Text(prompt),
-                                );
-
-                                tokio::spawn(async move {
-                                    if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
-                                        tracing::error!("Failed to send to bus: {}", e);
-                                    }
-                                });
+                                // Fan out: one tokio task per target, all
+                                // independent.  The bus dispatches each
+                                // message to its addressed agent in parallel.
+                                for agent_name in targets {
+                                    send_prompt_to_agent(
+                                        &runtime,
+                                        bus.clone(),
+                                        user_id,
+                                        agent_name,
+                                        prompt.clone(),
+                                    );
+                                }
 
                                 app.input.clear();
                                 app.chat_scroll_offset = 0; // jump to bottom when sending message
@@ -299,6 +342,41 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
     }
 }
 
+/// Spawn a tokio task that publishes a single TaskRequest to one agent
+/// through the bus.  Extracted from the Enter handler so multi-agent
+/// broadcast can call it in a loop, once per selected target.  Each
+/// task is independent — the agents respond in parallel.
+fn send_prompt_to_agent(
+    runtime: &Arc<AgentRuntime>,
+    bus: Arc<MessageBus>,
+    user_id: AgentId,
+    agent_name: String,
+    prompt: String,
+) {
+    let target_addr = runtime.get_agent_id(&agent_name).map(|id| AgentAddress {
+        agent_id: id,
+        agent_name: agent_name.clone(),
+        adapter_type: "agent".to_string(),
+    });
+    let from_addr = AgentAddress {
+        agent_id: user_id,
+        agent_name: "You".to_string(),
+        adapter_type: "tui".to_string(),
+    };
+    let bus_msg = AgentMessage::new(
+        from_addr,
+        target_addr,
+        MessageType::TaskRequest,
+        Payload::Text(prompt),
+    );
+
+    tokio::spawn(async move {
+        if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
+            tracing::error!("Failed to send to bus for {}: {}", agent_name, e);
+        }
+    });
+}
+
 fn ui(f: &mut ratatui::Frame, app: &App) {
     // Left panel for agents, main panel for chat, bottom panel for input
     let chunks = Layout::default()
@@ -311,10 +389,19 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .constraints([Constraint::Min(3), Constraint::Length(7)].as_ref())
         .split(chunks[1]);
 
-    // 1. Agent List — each row shows a colored status glyph, the agent
-    // name, and (if applicable) the last latency or live elapsed counter
-    // for in-flight requests.  We query `runtime.activity_of` on every
-    // tick so Thinking-state elapsed counters animate live.
+    // 1. Agent List — each row shows:
+    //   `>` / ` ` cursor       (primary selection cursor)
+    //   `[✓]` / `[ ]`           (multi-select checkbox — visible only when
+    //                            ANY agent is multi-selected; otherwise the
+    //                            checkbox column collapses to keep clean
+    //                            rendering for the common single-agent case)
+    //   colored status glyph   (●/◐/✗/○ from render_activity)
+    //   agent name
+    //   suffix (latency / elapsed / err)
+    //
+    // We query `runtime.activity_of` on every tick so Thinking-state
+    // elapsed counters animate live.
+    let any_multi = !app.multi_selected.is_empty();
     let items: Vec<ListItem> = app
         .agents
         .iter()
@@ -324,18 +411,35 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             let (glyph, glyph_color, suffix) = render_activity(&activity);
 
             let selected = i == app.selected_agent;
+            let multi = app.multi_selected.contains(&i);
             let cursor = if selected { "> " } else { "  " };
+
+            // Multi-select column.  Only render when at least one agent is
+            // multi-selected, so the single-agent default view stays compact.
+            let multi_box: Option<Span> = if any_multi {
+                if multi {
+                    Some(Span::styled("[✓] ", Style::default().fg(Color::Yellow)))
+                } else {
+                    Some(Span::styled("[ ] ", Style::default().fg(Color::DarkGray)))
+                }
+            } else {
+                None
+            };
+
             let mut name_style = Style::default();
-            if selected {
+            if multi {
+                name_style = name_style.fg(Color::Yellow);
+            } else if selected {
                 name_style = name_style.add_modifier(Modifier::BOLD).fg(Color::Cyan);
             }
 
-            let mut spans = vec![
-                Span::raw(cursor),
-                Span::styled(glyph, Style::default().fg(glyph_color)),
-                Span::raw(" "),
-                Span::styled(a.name.clone(), name_style),
-            ];
+            let mut spans = vec![Span::raw(cursor)];
+            if let Some(box_span) = multi_box {
+                spans.push(box_span);
+            }
+            spans.push(Span::styled(glyph, Style::default().fg(glyph_color)));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(a.name.clone(), name_style));
             if !suffix.is_empty() {
                 spans.push(Span::styled(
                     format!("  {}", suffix),
@@ -432,6 +536,48 @@ fn render_activity(activity: &AgentActivity) -> (&'static str, Color, String) {
     }
 }
 
+/// Toggle membership of `cursor` in `set` if `cursor` is a valid index
+/// into a list of `agent_count` items.  Pure helper extracted from
+/// `App::toggle_multi_select_current` so the state mutation can be
+/// unit-tested without constructing a full TUI App.
+fn toggle_multi_select(set: &mut HashSet<usize>, cursor: usize, agent_count: usize) {
+    if cursor >= agent_count {
+        return;
+    }
+    if !set.insert(cursor) {
+        set.remove(&cursor);
+    }
+}
+
+/// Resolve the list of agent names to fan a prompt out to.
+///
+/// * If `multi_selected` is non-empty: return the names of those agents,
+///   sorted by their indices (deterministic order for predictable
+///   broadcast behavior and stable test expectations).
+/// * Otherwise: return a single-element Vec with the primary-cursor
+///   agent (or empty Vec if there are no agents loaded).
+///
+/// Pure helper extracted from `App::current_send_targets` so the routing
+/// logic can be unit-tested without constructing a full TUI App.
+fn resolve_send_targets(
+    agent_names: &[&str],
+    multi_selected: &HashSet<usize>,
+    primary_cursor: usize,
+) -> Vec<String> {
+    if !multi_selected.is_empty() {
+        let mut indices: Vec<usize> = multi_selected.iter().copied().collect();
+        indices.sort();
+        return indices
+            .into_iter()
+            .filter_map(|i| agent_names.get(i).map(|s| s.to_string()))
+            .collect();
+    }
+    if !agent_names.is_empty() && primary_cursor < agent_names.len() {
+        return vec![agent_names[primary_cursor].to_string()];
+    }
+    Vec::new()
+}
+
 /// Render a millisecond latency in a compact form: `780ms` for sub-second,
 /// `2.1s` for seconds, `4m12s` for minutes (rare but possible for slow
 /// CLIs like cold-started Gemini).
@@ -512,5 +658,86 @@ mod tests {
         });
         assert_eq!(glyph, "✗");
         assert_eq!(suffix, "err");
+    }
+
+    // ── multi-select helpers ────────────────────────────────────
+
+    #[test]
+    fn toggle_multi_select_adds_then_removes() {
+        let mut set = HashSet::new();
+        toggle_multi_select(&mut set, 1, 4);
+        assert!(set.contains(&1));
+        // Toggling the same index removes it.
+        toggle_multi_select(&mut set, 1, 4);
+        assert!(!set.contains(&1));
+    }
+
+    #[test]
+    fn toggle_multi_select_ignores_out_of_bounds() {
+        let mut set = HashSet::new();
+        toggle_multi_select(&mut set, 7, 4);
+        assert!(set.is_empty(), "cursor past agent_count must be a no-op");
+        toggle_multi_select(&mut set, 4, 4);
+        assert!(set.is_empty(), "cursor == agent_count must also be no-op");
+    }
+
+    #[test]
+    fn toggle_multi_select_is_noop_when_no_agents() {
+        let mut set = HashSet::new();
+        toggle_multi_select(&mut set, 0, 0);
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn resolve_send_targets_falls_back_to_primary_when_no_multi_select() {
+        let agents = vec!["a", "b", "c"];
+        let set = HashSet::new();
+        let targets = resolve_send_targets(&agents, &set, 1);
+        assert_eq!(targets, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn resolve_send_targets_returns_empty_when_no_agents_at_all() {
+        let agents: Vec<&str> = vec![];
+        let set = HashSet::new();
+        let targets = resolve_send_targets(&agents, &set, 0);
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn resolve_send_targets_returns_multi_in_sorted_order() {
+        let agents = vec!["a", "b", "c", "d"];
+        let mut set = HashSet::new();
+        // Insert out of order to verify the helper sorts indices.
+        set.insert(2);
+        set.insert(0);
+        set.insert(3);
+        let targets = resolve_send_targets(&agents, &set, 1);
+        assert_eq!(targets, vec!["a".to_string(), "c".to_string(), "d".to_string()]);
+    }
+
+    #[test]
+    fn resolve_send_targets_multi_select_overrides_primary_cursor() {
+        // When multi_selected is non-empty, the primary cursor index is
+        // IGNORED — only multi-selected indices contribute.  This keeps
+        // the UX predictable: "if I've selected some, those are who I'm
+        // talking to, regardless of where my cursor wanders."
+        let agents = vec!["a", "b", "c"];
+        let mut set = HashSet::new();
+        set.insert(0);
+        let targets = resolve_send_targets(&agents, &set, 2);  // cursor on "c"
+        assert_eq!(targets, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn resolve_send_targets_filters_indices_past_end() {
+        // Defensive: if the multi-selection contains a stale index
+        // (e.g. agents shrank), we silently drop it instead of panicking.
+        let agents = vec!["a", "b"];
+        let mut set = HashSet::new();
+        set.insert(0);
+        set.insert(5);  // stale
+        let targets = resolve_send_targets(&agents, &set, 0);
+        assert_eq!(targets, vec!["a".to_string()]);
     }
 }
