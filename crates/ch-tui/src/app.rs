@@ -392,7 +392,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     // Left panel for agents, main panel for chat, bottom panel for input
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(25), Constraint::Percentage(75)].as_ref())
+        .constraints([Constraint::Percentage(32), Constraint::Percentage(68)].as_ref())
         .split(f.size());
 
     let right_chunks = Layout::default()
@@ -545,10 +545,10 @@ fn render_activity(activity: &AgentActivity) -> (&'static str, Color, String) {
                 Some(ms) => format_latency(*ms),
                 None => String::new(),
             };
-            // Append token counts if non-zero: "22k/0.3k"
+            // Append token counts if non-zero, compact: "·22k/284"
             if *cumulative_tokens_in > 0 || *cumulative_tokens_out > 0 {
                 use std::fmt::Write;
-                let _ = write!(suffix, " · {}/{}", format_tokens(*cumulative_tokens_in), format_tokens(*cumulative_tokens_out));
+                let _ = write!(suffix, "·{}/{}", format_tokens(*cumulative_tokens_in), format_tokens(*cumulative_tokens_out));
             }
             ("●", Color::Green, suffix)
         }
@@ -702,7 +702,7 @@ mod tests {
             cumulative_tokens_out: 284,
         });
         assert_eq!(glyph, "●");
-        assert_eq!(suffix, "18.6s · 22k/284");
+        assert_eq!(suffix, "18.6s·22k/284");
     }
 
     #[test]
