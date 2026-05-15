@@ -392,7 +392,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     // Left panel for agents, main panel for chat, bottom panel for input
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(32), Constraint::Percentage(68)].as_ref())
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
         .split(f.size());
 
     let right_chunks = Layout::default()
@@ -449,14 +449,14 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 spans.push(box_span);
             }
             spans.push(Span::styled(glyph, Style::default().fg(glyph_color)));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(a.name.clone(), name_style));
+            // Suffix before name — always visible, name truncates instead
             if !suffix.is_empty() {
                 spans.push(Span::styled(
-                    format!("  {}", suffix),
+                    format!("{} ", suffix),
                     Style::default().fg(Color::DarkGray),
                 ));
             }
+            spans.push(Span::styled(a.name.clone(), name_style));
             ListItem::new(Line::from(spans))
         })
         .collect();
