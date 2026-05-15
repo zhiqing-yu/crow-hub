@@ -714,8 +714,15 @@ impl AgentDriver for SubprocessDriver {
                 .ok_or(AgentError::Driver("stdout unavailable".into()))?;
             let lines = BufReader::new(stdout).lines();
             let config = self.config.clone();
+            let prompt_len = prompt.len() as u64;
+
+            // Track total output chars to estimate tokens at stream end
+            let total_output =
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let total_for_final = total_output.clone();
 
             let stream = stream::unfold((lines, child), move |(mut lines, mut child)| {
+                let total = total_output.clone();
                 let cfg = config.clone();
                 async move {
                     match lines.next_line().await {
@@ -774,6 +781,12 @@ impl AgentDriver for SubprocessDriver {
                                 trimmed.to_string()
                             };
 
+                            // Track output chars for token estimation at end of stream
+                            total.fetch_add(
+                                content.len() as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+
                             Some((
                                 Ok(ChatStreamChunk {
                                     content: format!("{}\n", content),
@@ -796,6 +809,23 @@ impl AgentDriver for SubprocessDriver {
                     }
                 }
             });
+
+            // Chain a final chunk with estimated token counts so the runtime
+            // handler picks them up for the cumulative TUI display.
+            let out_chars = total_for_final.load(std::sync::atomic::Ordering::Relaxed);
+            let est_in = (prompt_len as f64 / 4.0).ceil() as u64;
+            let est_out = (out_chars as f64 / 4.0).ceil() as u64;
+            let final_chunk = ChatStreamChunk {
+                content: String::new(),
+                is_final: true,
+                finish_reason: Some(FinishReason::Stop),
+                usage: Some(TokenUsage {
+                    input_tokens: est_in,
+                    output_tokens: est_out,
+                    total_tokens: est_in + est_out,
+                }),
+            };
+            let stream = stream.chain(stream::once(async move { Ok(final_chunk) }));
 
             return Ok(stream.boxed());
         }
