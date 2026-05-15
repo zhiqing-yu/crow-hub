@@ -348,6 +348,7 @@ impl SubprocessDriver {
     ///   - OpenClaw: `meta.usage.input` / `meta.usage.output`
     ///   - Anthropic: `usage.input_tokens` / `usage.output_tokens`
     ///   - OpenAI: `usage.prompt_tokens` / `usage.completion_tokens`
+    ///   - Gemini: `usageMetadata.promptTokenCount` / `usageMetadata.candidatesTokenCount`
     fn extract_usage_from_json(&self, raw_json: &str) -> Option<TokenUsage> {
         let val: serde_json::Value = serde_json::from_str(raw_json).ok()?;
 
@@ -363,6 +364,19 @@ impl SubprocessDriver {
                         total_tokens: input.unwrap_or(0) + output.unwrap_or(0),
                     });
                 }
+            }
+        }
+
+        // Gemini shape: { usageMetadata: { promptTokenCount, candidatesTokenCount } }
+        if let Some(meta) = val.get("usageMetadata") {
+            let input = meta.get("promptTokenCount").and_then(|v| v.as_u64());
+            let output = meta.get("candidatesTokenCount").and_then(|v| v.as_u64());
+            if input.is_some() || output.is_some() {
+                return Some(TokenUsage {
+                    input_tokens: input.unwrap_or(0),
+                    output_tokens: output.unwrap_or(0),
+                    total_tokens: input.unwrap_or(0) + output.unwrap_or(0),
+                });
             }
         }
 
@@ -386,6 +400,44 @@ impl SubprocessDriver {
             }
         }
 
+        None
+    }
+
+    /// Extract token usage from stderr when the CLI agent prints a
+    /// human-readable summary.  Common formats:
+    ///   - Claude: `⏺ Total tokens: 1234 (input: 100, output: 1134)`
+    ///   - Generic:  `input: N, output: N`
+    fn extract_usage_from_stderr(&self, stderr: &str) -> Option<TokenUsage> {
+        // Claude Code format
+        let re = regex::Regex::new(
+            r"Total tokens:\s*(\d+)\s*\(input:\s*(\d+),\s*output:\s*(\d+)\)",
+        )
+        .ok()?;
+        if let Some(caps) = re.captures(stderr) {
+            let input = caps.get(2)?.as_str().parse::<u64>().ok()?;
+            let output = caps.get(3)?.as_str().parse::<u64>().ok()?;
+            return Some(TokenUsage {
+                input_tokens: input,
+                output_tokens: output,
+                total_tokens: input + output,
+            });
+        }
+        // Generic: "input: N ... output: N"
+        let re2 = regex::Regex::new(
+            r"(?:^|\s)input[^\d]*(\d+).*?output[^\d]*(\d+)",
+        )
+        .ok()?;
+        if let Some(caps) = re2.captures(stderr) {
+            let input = caps.get(1)?.as_str().parse::<u64>().ok()?;
+            let output = caps.get(2)?.as_str().parse::<u64>().ok()?;
+            if (input > 0 || output > 0) && input < 10_000_000 && output < 10_000_000 {
+                return Some(TokenUsage {
+                    input_tokens: input,
+                    output_tokens: output,
+                    total_tokens: input + output,
+                });
+            }
+        }
         None
     }
 
@@ -490,19 +542,22 @@ impl AgentDriver for SubprocessDriver {
             }
 
             let content = self.process_output(&combined_output);
+            // Try real token counts first (JSON metadata → stderr summary → char estimate)
             let usage = if self.config.output_mode == SubprocessOutputMode::Json {
                 self.extract_usage_from_json(&combined_output)
+                    .or_else(|| self.extract_usage_from_stderr(&filtered_stderr))
                     .unwrap_or_else(|| TokenUsage {
                         input_tokens: self.estimate_tokens(&prompt),
                         output_tokens: self.estimate_tokens(&content),
                         total_tokens: self.estimate_tokens(&prompt) + self.estimate_tokens(&content),
                     })
             } else {
-                TokenUsage {
-                    input_tokens: self.estimate_tokens(&prompt),
-                    output_tokens: self.estimate_tokens(&content),
-                    total_tokens: self.estimate_tokens(&prompt) + self.estimate_tokens(&content),
-                }
+                self.extract_usage_from_stderr(&filtered_stderr)
+                    .unwrap_or_else(|| TokenUsage {
+                        input_tokens: self.estimate_tokens(&prompt),
+                        output_tokens: self.estimate_tokens(&content),
+                        total_tokens: self.estimate_tokens(&prompt) + self.estimate_tokens(&content),
+                    })
             };
 
             // Even on clean exit, if content is empty and stderr had something,
@@ -1135,5 +1190,42 @@ mod tests {
         // "hello" * 8 = 40 chars → 10 tokens
         let text = "hellohellohellohellohellohellohellohello";
         assert_eq!(d.estimate_tokens(text), 10);
+    }
+
+    // ── extract_usage_from_json ────────────────────────────────
+
+    #[test]
+    fn extract_usage_gemini_shape() {
+        let d = dummy_driver();
+        let json = r#"{"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":50,"totalTokenCount":150}}"#;
+        let usage = d.extract_usage_from_json(json).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+    }
+
+    // ── extract_usage_from_stderr ──────────────────────────────
+
+    #[test]
+    fn extract_usage_from_stderr_claude_format() {
+        let d = dummy_driver();
+        let stderr = "⏺ Total tokens: 1234 (input: 100, output: 1134)";
+        let usage = d.extract_usage_from_stderr(stderr).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 1134);
+    }
+
+    #[test]
+    fn extract_usage_from_stderr_generic() {
+        let d = dummy_driver();
+        let stderr = "some noise\n  input tokens:  500  output tokens: 3200\nmore noise";
+        let usage = d.extract_usage_from_stderr(stderr).unwrap();
+        assert_eq!(usage.input_tokens, 500);
+        assert_eq!(usage.output_tokens, 3200);
+    }
+
+    #[test]
+    fn extract_usage_from_stderr_no_match() {
+        let d = dummy_driver();
+        assert!(d.extract_usage_from_stderr("no token info here").is_none());
     }
 }
