@@ -50,6 +50,8 @@ pub struct App {
     pub focused_panel: FocusedPanel,
     pub chat_scroll_offset: usize,
     pub input_scroll_offset: usize,
+    /// Frame counter for animated spinners and transitions
+    pub tick_count: u64,
 }
 
 impl App {
@@ -77,6 +79,7 @@ impl App {
             focused_panel: FocusedPanel::Input,
             chat_scroll_offset: 0,
             input_scroll_offset: 0,
+            tick_count: 0,
         }
     }
 
@@ -107,6 +110,7 @@ impl App {
     }
 
     pub fn on_tick(&mut self) {
+        self.tick_count = self.tick_count.wrapping_add(1);
         while let Ok((agent, response)) = self.response_rx.try_recv() {
             // Streaming intelligence: append to last message if it's from the same agent
             if let Some(last_msg) = self.messages.last_mut() {
@@ -389,18 +393,42 @@ fn send_prompt_to_agent(
 }
 
 fn ui(f: &mut ratatui::Frame, app: &App) {
+    // Split screen: main area + 1-line footer
+    let main_footer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)].as_ref())
+        .split(f.size());
+    let main_area = main_footer[0];
+    let footer_area = main_footer[1];
+
     // Left panel for agents, main panel for chat, bottom panel for input
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
-        .split(f.size());
+        .split(main_area);
 
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(7)].as_ref())
         .split(chunks[1]);
 
-    // 1. Agent List — each row shows:
+    // 1a. Agent status summary — quick overview at top of panel
+    let (mut thinking, mut idle, mut errored, mut unknown) = (0u32, 0u32, 0u32, 0u32);
+    for a in &app.agents {
+        let act = app.runtime.activity_of(&a.name);
+        match act {
+            AgentActivity::Thinking { .. } => thinking += 1,
+            AgentActivity::Idle { .. } => idle += 1,
+            AgentActivity::Errored { .. } => errored += 1,
+            AgentActivity::Unknown => unknown += 1,
+        }
+    }
+    let summary = format!(
+        "{} thinking  {} ready  {} erred  {} new",
+        thinking, idle, errored, unknown
+    );
+
+    // 1b. Agent List — each row shows:
     //   `>` / ` ` cursor       (primary selection cursor)
     //   `[✓]` / `[ ]`           (multi-select checkbox — visible only when
     //                            ANY agent is multi-selected; otherwise the
@@ -419,7 +447,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .enumerate()
         .map(|(i, a)| {
             let activity = app.runtime.activity_of(&a.name);
-            let (glyph, glyph_color, suffix) = render_activity(&activity);
+            let (glyph, glyph_color, suffix) = render_activity(&activity, app.tick_count);
 
             let selected = i == app.selected_agent;
             let multi = app.multi_selected.contains(&i);
@@ -467,6 +495,16 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     if app.focused_panel == FocusedPanel::Agents {
         agents_block = agents_block.border_style(Style::default().fg(Color::LightBlue));
     }
+
+    // Split agent panel: status summary (2 lines) + list
+    let agent_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(1)].as_ref())
+        .split(agents_block.inner(chunks[0]));
+    let summary_par = Paragraph::new(summary)
+        .style(Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(summary_par, agent_chunks[0]);
     let agents_list = List::new(items).block(agents_block);
     f.render_widget(agents_list, chunks[0]);
 
@@ -517,6 +555,17 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .wrap(ratatui::widgets::Wrap { trim: false })
         .scroll((app.input_scroll_offset as u16, 0));
     f.render_widget(input_par, right_chunks[1]);
+
+    // Footer: keyboard shortcut bar (context-sensitive)
+    let shortcuts = match app.focused_panel {
+        FocusedPanel::Agents => "↑↓:navigate  Space:multi-select  Backspace:clear  Enter:send  Tab:input",
+        FocusedPanel::Chat => "↑↓:scroll  Tab:agents  Ctrl+C:quit",
+        FocusedPanel::Input => "Enter:send  Tab:agents  Ctrl+C:quit",
+    };
+    let footer = Paragraph::new(shortcuts)
+        .style(Style::default().fg(Color::DarkGray).bg(Color::Black))
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(footer, footer_area);
 }
 
 /// Map an `AgentActivity` to (glyph, color, suffix) for the agent list.
@@ -533,7 +582,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 ///   Errored   → "err" (red).  Truncating the actual error keeps the
 ///               agent list narrow; the full error appears in the chat.
 ///   Unknown   → empty (clean default for not-yet-spoken agents).
-fn render_activity(activity: &AgentActivity) -> (&'static str, Color, String) {
+/// Braille spinner frames for animated thinking indicator
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+fn render_activity(activity: &AgentActivity, tick: u64) -> (&'static str, Color, String) {
     match activity {
         AgentActivity::Unknown => ("○", Color::DarkGray, String::new()),
         AgentActivity::Idle {
@@ -545,7 +597,6 @@ fn render_activity(activity: &AgentActivity) -> (&'static str, Color, String) {
                 Some(ms) => format_latency(*ms),
                 None => String::new(),
             };
-            // Append token counts if non-zero, compact: "·22k/284"
             if *cumulative_tokens_in > 0 || *cumulative_tokens_out > 0 {
                 use std::fmt::Write;
                 let _ = write!(suffix, "·{}/{}", format_tokens(*cumulative_tokens_in), format_tokens(*cumulative_tokens_out));
@@ -555,7 +606,9 @@ fn render_activity(activity: &AgentActivity) -> (&'static str, Color, String) {
         AgentActivity::Thinking { since } => {
             let elapsed_secs = (chrono::Utc::now() - *since).num_seconds().max(0);
             let suffix = format!("{}s…", elapsed_secs);
-            ("●", Color::Yellow, suffix)
+            // Animated braille spinner: cycles through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
+            let glyph = SPINNER[(tick as usize / 3) % SPINNER.len()];
+            (glyph, Color::Yellow, suffix)
         }
         AgentActivity::Errored { .. } => ("✗", Color::Red, "err".to_string()),
     }
@@ -678,7 +731,7 @@ mod tests {
 
     #[test]
     fn render_activity_unknown_has_empty_suffix() {
-        let (glyph, _, suffix) = render_activity(&AgentActivity::Unknown);
+        let (glyph, _, suffix) = render_activity(&AgentActivity::Unknown, 0);
         assert_eq!(glyph, "○");
         assert_eq!(suffix, "");
     }
@@ -689,7 +742,7 @@ mod tests {
             last_latency_ms: Some(780),
             cumulative_tokens_in: 0,
             cumulative_tokens_out: 0,
-        });
+        }, 0);
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "780ms");
     }
@@ -700,7 +753,7 @@ mod tests {
             last_latency_ms: Some(18_600),
             cumulative_tokens_in: 22279,
             cumulative_tokens_out: 284,
-        });
+        }, 0);
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "18.6s·22k/284");
     }
@@ -711,7 +764,7 @@ mod tests {
             last_latency_ms: Some(100),
             cumulative_tokens_in: 0,
             cumulative_tokens_out: 0,
-        });
+        }, 0);
         assert!(!suffix.contains("·"), "no token suffix when both zero");
     }
 
@@ -728,7 +781,7 @@ mod tests {
     fn render_activity_errored_shows_err_suffix() {
         let (glyph, _, suffix) = render_activity(&AgentActivity::Errored {
             last_error: "boom".into(),
-        });
+        }, 0);
         assert_eq!(glyph, "✗");
         assert_eq!(suffix, "err");
     }
