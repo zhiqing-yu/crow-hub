@@ -31,7 +31,18 @@ pub fn spawn_memory_writer(
                             "to_agent".to_string(),
                             serde_json::Value::String(to.agent_id.to_string()),
                         );
+                        metadata.insert(
+                            "to_agent_name".to_string(),
+                            serde_json::Value::String(to.agent_name.clone()),
+                        );
                     }
+                    // Capture the sender's display name (e.g. "claude-wsl-ubuntu",
+                    // "You") so `crow memory tail` and the future memory browser
+                    // can show readable labels instead of raw AgentId UUIDs.
+                    metadata.insert(
+                        "from_agent_name".to_string(),
+                        serde_json::Value::String(msg.from.agent_name.clone()),
+                    );
 
                     let memory = MemoryEntry {
                         memory_id: msg.message_id.to_string(),

@@ -100,6 +100,28 @@ enum Commands {
         ///   * (omitted) — refresh ALL hosts
         host: Option<String>,
     },
+
+    /// Browse the SQLite-persisted message history (~/.crow-hub/messages.db)
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommands,
+    },
+}
+
+/// Read-only operations over the persisted message store.
+#[derive(Subcommand)]
+enum MemoryCommands {
+    /// Show the most recent N messages from a channel (oldest first)
+    Tail {
+        /// Number of messages to show (default 20)
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: usize,
+        /// Channel to filter by (default: general)
+        #[arg(short, long, default_value = "general")]
+        channel: String,
+    },
+    /// Show the total count of persisted messages
+    Count,
 }
 
 #[derive(Subcommand)]
@@ -244,6 +266,10 @@ async fn main() -> anyhow::Result<()> {
 
         Some(Commands::RefreshEnv { host }) => {
             run_refresh_env(host)?;
+        }
+
+        Some(Commands::Memory { command }) => {
+            run_memory(command).await?;
         }
     }
 
@@ -535,6 +561,96 @@ fn run_refresh_env(host: Option<String>) -> anyhow::Result<()> {
             println!("✓ Refreshed cached env for {}.", key.label());
         }
     }
+    Ok(())
+}
+
+/// Open the SQLite memory store at the canonical user location.
+/// Returns the store ready for read-only queries.  Used by `crow memory *`
+/// subcommands which don't go through the main runtime.
+async fn open_memory_store() -> anyhow::Result<ch_memory::backends::sqlite::SqliteMemoryStore> {
+    let mut config = ch_memory::SqliteConfig::default();
+    config.path = ch_core::get_home_dir()
+        .join("messages.db")
+        .to_string_lossy()
+        .to_string();
+    let store = ch_memory::backends::sqlite::SqliteMemoryStore::new(config).await?;
+    Ok(store)
+}
+
+/// Dispatch for `crow memory <subcommand>`.
+async fn run_memory(command: MemoryCommands) -> anyhow::Result<()> {
+    match command {
+        MemoryCommands::Tail { count, channel } => run_memory_tail(channel, count).await,
+        MemoryCommands::Count => run_memory_count().await,
+    }
+}
+
+/// Print the most recent N messages from a channel, oldest-first.
+async fn run_memory_tail(channel: String, count: usize) -> anyhow::Result<()> {
+    use ch_memory::MemoryStore;
+
+    let store = open_memory_store().await?;
+    let mut entries = store.recent(&channel, count).await?;
+    // `recent()` returns newest-first (DESC); reverse so the printed log
+    // reads top-to-bottom in chronological order, matching `tail -f` mental
+    // model.
+    entries.reverse();
+
+    println!(
+        "━━━ crow memory tail — channel: {}, last {} of {} ━━━",
+        channel,
+        entries.len(),
+        count
+    );
+    if entries.is_empty() {
+        println!("(no messages persisted yet for channel '{}')", channel);
+        println!("Tip: run the TUI (`crow`) and chat with an agent; messages");
+        println!("are written to ~/.crow-hub/messages.db by the bus subscriber.");
+        return Ok(());
+    }
+
+    for entry in entries {
+        // Pick a glyph by message direction.  TaskRequest = user/agent
+        // asking, TaskResponse = agent answering.
+        let glyph = match entry.memory_type.as_str() {
+            "taskrequest" => "→",
+            "taskresponse" => "←",
+            other => other,
+        };
+        // Prefer the readable agent name from metadata when present (writer
+        // started storing this today); fall back to the raw AgentId prefix
+        // so historical entries written before the writer change still
+        // display sensibly.
+        let from = entry
+            .metadata
+            .get("from_agent_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                let id = entry.agent_id.to_string();
+                if id.len() >= 8 { id[..8].to_string() } else { id }
+            });
+
+        let ts = entry.created_at.format("%m-%d %H:%M:%S");
+        let mut content = entry.content.replace('\n', " ").replace('\r', " ");
+        const MAX_CONTENT: usize = 120;
+        if content.chars().count() > MAX_CONTENT {
+            // Truncate by char count (not byte index) so we don't slice
+            // multi-byte UTF-8 sequences like CJK in half.
+            content = content.chars().take(MAX_CONTENT).collect::<String>() + "…";
+        }
+
+        println!("{}  {}  {:<22}  {}", ts, glyph, from, content);
+    }
+    Ok(())
+}
+
+/// Print the total number of persisted messages.
+async fn run_memory_count() -> anyhow::Result<()> {
+    use ch_memory::MemoryStore;
+    let store = open_memory_store().await?;
+    let n = store.count().await?;
+    println!("Stored messages: {}", n);
     Ok(())
 }
 
