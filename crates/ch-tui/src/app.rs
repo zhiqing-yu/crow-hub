@@ -1,7 +1,8 @@
 use anyhow::Result;
 use ch_agent::{AgentActivity, AgentInfo, AgentRuntime};
 use ch_core::MessageBus;
-use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload};
+use ch_memory::MemoryStore;
+use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload, MemoryEntry};
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -28,6 +29,7 @@ pub enum FocusedPanel {
     Agents,
     Chat,
     Input,
+    Memory,
 }
 
 /// App state
@@ -52,6 +54,12 @@ pub struct App {
     pub input_scroll_offset: usize,
     /// Frame counter for animated spinners and transitions
     pub tick_count: u64,
+    /// Memory store for the TUI panel (read-only, shared with writer)
+    pub memory_store: Option<Arc<dyn MemoryStore>>,
+    /// Cached memory rows for the current channel
+    pub memory_rows: Vec<MemoryEntry>,
+    /// Scroll offset for the memory panel
+    pub memory_scroll_offset: usize,
 }
 
 impl App {
@@ -61,6 +69,7 @@ impl App {
         user_agent_id: AgentId,
         tx: mpsc::Sender<(String, String)>,
         response_rx: mpsc::Receiver<(String, String)>,
+        memory_store: Option<Arc<dyn MemoryStore>>,
     ) -> Self {
         let agents = runtime.list_agents();
 
@@ -80,6 +89,9 @@ impl App {
             chat_scroll_offset: 0,
             input_scroll_offset: 0,
             tick_count: 0,
+            memory_store,
+            memory_rows: Vec::new(),
+            memory_scroll_offset: 0,
         }
     }
 
@@ -109,6 +121,19 @@ impl App {
         resolve_send_targets(&agent_names, &self.multi_selected, self.selected_agent)
     }
 
+    /// Refresh the memory panel from the SQLite store.
+    /// Safe to call from a sync context (blocks on tokio handle).
+    pub fn refresh_memory(&mut self) {
+        if let Some(ref store) = self.memory_store {
+            let store = store.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                if let Ok(rows) = handle.block_on(store.recent("general", 50)) {
+                    self.memory_rows = rows;
+                }
+            }
+        }
+    }
+
     pub fn on_tick(&mut self) {
         self.tick_count = self.tick_count.wrapping_add(1);
         while let Ok((agent, response)) = self.response_rx.try_recv() {
@@ -132,6 +157,7 @@ pub fn run_tui_app(
     user_agent_id: AgentId,
     tx: mpsc::Sender<(String, String)>,
     response_rx: mpsc::Receiver<(String, String)>,
+    memory_store: Option<Arc<dyn MemoryStore>>,
 ) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
@@ -163,7 +189,7 @@ pub fn run_tui_app(
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let mut app = App::new(runtime, bus, user_agent_id, tx, response_rx);
+    let mut app = App::new(runtime, bus, user_agent_id, tx, response_rx, memory_store);
     let res = run_loop(&mut terminal, &mut app);
 
     // Restore terminal
@@ -245,15 +271,23 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             app.focused_panel = match app.focused_panel {
                                 FocusedPanel::Input => FocusedPanel::Agents,
                                 FocusedPanel::Agents => FocusedPanel::Chat,
-                                FocusedPanel::Chat => FocusedPanel::Input,
+                                FocusedPanel::Chat => FocusedPanel::Memory,
+                                FocusedPanel::Memory => FocusedPanel::Input,
                             };
+                            if app.focused_panel == FocusedPanel::Memory {
+                                app.refresh_memory();
+                            }
                         }
                         KeyCode::BackTab => {
                             app.focused_panel = match app.focused_panel {
-                                FocusedPanel::Input => FocusedPanel::Chat,
+                                FocusedPanel::Input => FocusedPanel::Memory,
+                                FocusedPanel::Memory => FocusedPanel::Chat,
                                 FocusedPanel::Chat => FocusedPanel::Agents,
                                 FocusedPanel::Agents => FocusedPanel::Input,
                             };
+                            if app.focused_panel == FocusedPanel::Memory {
+                                app.refresh_memory();
+                            }
                         }
                         KeyCode::Up => match app.focused_panel {
                             FocusedPanel::Agents => {
@@ -266,6 +300,9 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             }
                             FocusedPanel::Input => {
                                 app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1);
+                            }
+                            FocusedPanel::Memory => {
+                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_add(1);
                             }
                         },
                         KeyCode::Down => match app.focused_panel {
@@ -280,7 +317,13 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             FocusedPanel::Input => {
                                 app.input_scroll_offset = app.input_scroll_offset.saturating_add(1);
                             }
+                            FocusedPanel::Memory => {
+                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_sub(1);
+                            }
                         },
+                        KeyCode::Char('r') if app.focused_panel == FocusedPanel::Memory => {
+                            app.refresh_memory();
+                        }
                         KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents => {
                             // Space on Agents panel = toggle multi-select on
                             // the cursored agent.  Pressing Enter while any
@@ -520,28 +563,75 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
 
-    let mut all_lines: Vec<String> = Vec::new();
-    for m in &app.messages {
-        let wrapped = wrap_text(m, width);
-        all_lines.extend(wrapped);
+    if app.focused_panel == FocusedPanel::Memory {
+        // ── Memory Panel ────────────────────────────────────────
+        let mut mem_block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Memory  (last {}, ↑↓:scroll)", app.memory_rows.len()));
+        if app.focused_panel == FocusedPanel::Memory {
+            mem_block = mem_block.border_style(Style::default().fg(Color::LightBlue));
+        }
+
+        let mem_items: Vec<ListItem> = app
+            .memory_rows
+            .iter()
+            .rev() // newest at bottom
+            .skip(app.memory_scroll_offset)
+            .take(height)
+            .map(|entry| {
+                let glyph = match entry.memory_type.as_str() {
+                    "taskrequest" => "→",
+                    "taskresponse" => "←",
+                    _ => "·",
+                };
+                let from = entry
+                    .metadata
+                    .get("from_agent_name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        let id = entry.agent_id.to_string();
+                        if id.len() >= 8 { id[..8].to_string() } else { id }
+                    });
+                let ts = entry.created_at.format("%m-%d %H:%M");
+                let content = entry.content.replace('\n', " ").replace('\r', " ");
+                let line = format!(
+                    "{} {} {:>8}  {}",
+                    glyph,
+                    ts,
+                    from,
+                    content
+                );
+                ListItem::new(Line::from(Span::raw(line)))
+            })
+            .collect();
+
+        let mem_list = List::new(mem_items).block(mem_block);
+        f.render_widget(mem_list, right_chunks[0]);
+    } else {
+        // ── Chat Panel ──────────────────────────────────────────
+        let mut all_lines: Vec<String> = Vec::new();
+        for m in &app.messages {
+            let wrapped = wrap_text(m, width);
+            all_lines.extend(wrapped);
+        }
+
+        let max_scroll = all_lines.len().saturating_sub(height);
+        let current_scroll = max_scroll.saturating_sub(app.chat_scroll_offset);
+        let visible_lines =
+            &all_lines[current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
+
+        let messages_items: Vec<ListItem> = visible_lines
+            .iter()
+            .map(|m| {
+                let content = vec![Line::from(Span::raw(m))];
+                ListItem::new(content)
+            })
+            .collect();
+
+        let messages_list = List::new(messages_items).block(messages_block);
+        f.render_widget(messages_list, right_chunks[0]);
     }
-
-    // Auto-scroll: take the last `height` lines, adjusted by `chat_scroll_offset`
-    let max_scroll = all_lines.len().saturating_sub(height);
-    let current_scroll = max_scroll.saturating_sub(app.chat_scroll_offset);
-    let visible_lines =
-        &all_lines[current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
-
-    let messages_items: Vec<ListItem> = visible_lines
-        .iter()
-        .map(|m| {
-            let content = vec![Line::from(Span::raw(m))];
-            ListItem::new(content)
-        })
-        .collect();
-
-    let messages_list = List::new(messages_items).block(messages_block);
-    f.render_widget(messages_list, right_chunks[0]);
 
     // 3. Input Panel
     let mut input_block = Block::default()
@@ -558,9 +648,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     // Footer: keyboard shortcut bar (context-sensitive)
     let shortcuts = match app.focused_panel {
-        FocusedPanel::Agents => "↑↓:navigate  Space:multi-select  Backspace:clear  Enter:send  Tab:input",
-        FocusedPanel::Chat => "↑↓:scroll  Tab:agents  Ctrl+C:quit",
-        FocusedPanel::Input => "Enter:send  Tab:agents  Ctrl+C:quit",
+        FocusedPanel::Agents => "↑↓:navigate  Space:multi-select  Backspace:clear  Enter:send  Tab:next",
+        FocusedPanel::Chat => "↑↓:scroll  Tab:next  Ctrl+C:quit",
+        FocusedPanel::Input => "Enter:send  Tab:next  Ctrl+C:quit",
+        FocusedPanel::Memory => "↑↓:scroll  r:refresh  Tab:next  Ctrl+C:quit",
     };
     let footer = Paragraph::new(shortcuts)
         .style(Style::default().fg(Color::DarkGray).bg(Color::Black))

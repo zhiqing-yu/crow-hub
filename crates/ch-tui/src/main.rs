@@ -335,6 +335,7 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
         user_agent_id,
         tx,
         response_rx,
+        Some(memory_store.clone() as Arc<dyn ch_memory::MemoryStore>),
     )?;
 
     // Clean shutdown
