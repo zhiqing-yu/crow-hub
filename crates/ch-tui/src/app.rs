@@ -537,17 +537,34 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         agents_block = agents_block.border_style(Style::default().fg(Color::LightBlue));
     }
 
-    // Split agent panel: status summary (2 lines) + list
+    // Render the panel block (border + title) ONCE, then split its inner
+    // area into [summary | list].  The previous implementation rendered
+    // both the summary AND a separate List-with-block to the full sidebar,
+    // which caused the List's re-painted border + first-row content to
+    // overlap the summary text — producing the garbled
+    //   "○ openclaw-ssh-1eady  0 erred  11 n"
+    // first row that DeepSeek's P0 polish (1cecc11) shipped with.
+    let inner = agents_block.inner(chunks[0]);
+    f.render_widget(agents_block, chunks[0]);
+
+    // Length(1) — the summary is a single line.  Min(1) leaves the rest
+    // of the inner area for the agent list.
     let agent_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1)].as_ref())
-        .split(agents_block.inner(chunks[0]));
+        .constraints([Constraint::Length(1), Constraint::Min(1)].as_ref())
+        .split(inner);
+
     let summary_par = Paragraph::new(summary)
         .style(Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))
         .alignment(ratatui::layout::Alignment::Center);
     f.render_widget(summary_par, agent_chunks[0]);
-    let agents_list = List::new(items).block(agents_block);
-    f.render_widget(agents_list, chunks[0]);
+
+    // NO `.block(...)` here — the border + title were already drawn above.
+    // Rendering the list to agent_chunks[1] (the post-summary sub-region)
+    // means each agent gets its own row starting BELOW the summary,
+    // instead of overlapping it.
+    let agents_list = List::new(items);
+    f.render_widget(agents_list, agent_chunks[1]);
 
     // 2. Chat Messages
     let mut messages_block = Block::default()
