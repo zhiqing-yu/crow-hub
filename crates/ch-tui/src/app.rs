@@ -472,7 +472,6 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     );
 
     // 1b. Agent List — each row shows:
-    //   `>` / ` ` cursor       (primary selection cursor)
     //   `[✓]` / `[ ]`           (multi-select checkbox — visible only when
     //                            ANY agent is multi-selected; otherwise the
     //                            checkbox column collapses to keep clean
@@ -494,7 +493,6 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
             let selected = i == app.selected_agent;
             let multi = app.multi_selected.contains(&i);
-            let cursor = if selected { "> " } else { "  " };
 
             // Multi-select column.  Only render when at least one agent is
             // multi-selected, so the single-agent default view stays compact.
@@ -515,7 +513,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 name_style = name_style.add_modifier(Modifier::BOLD).fg(Color::Cyan);
             }
 
-            let mut spans = vec![Span::raw(cursor)];
+            let mut spans = Vec::new();
             if let Some(box_span) = multi_box {
                 spans.push(box_span);
             }
