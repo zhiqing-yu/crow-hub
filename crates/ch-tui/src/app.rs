@@ -302,7 +302,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1);
                             }
                             FocusedPanel::Memory => {
-                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_add(1);
+                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_sub(1);
                             }
                         },
                         KeyCode::Down => match app.focused_panel {
@@ -318,7 +318,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.input_scroll_offset = app.input_scroll_offset.saturating_add(1);
                             }
                             FocusedPanel::Memory => {
-                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_sub(1);
+                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_add(1);
                             }
                         },
                         KeyCode::Char('r') if app.focused_panel == FocusedPanel::Memory => {
