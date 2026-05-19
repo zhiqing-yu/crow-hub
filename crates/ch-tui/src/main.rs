@@ -304,7 +304,8 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
     let router = Arc::new(ModelRouter::new(registry.clone()));
 
     let plugins_dir = ch_core::get_plugins_dir();
-    let agent_runtime = Arc::new(AgentRuntime::new(router, hub.bus.clone(), plugins_dir));
+    let pricing = Arc::new(ch_core::pricing::load_user_pricing());
+    let agent_runtime = Arc::new(AgentRuntime::new(router, hub.bus.clone(), plugins_dir, pricing));
     agent_runtime.load_all().await?;
 
     // Subscribe a "user" identity to the bus for the TUI
@@ -384,7 +385,8 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
     // 2. Agent Plugin System
     info!("Initializing Agent Runtime...");
     let plugins_dir = ch_core::get_plugins_dir();
-    let agent_runtime = AgentRuntime::new(router.clone(), hub.bus.clone(), plugins_dir);
+    let pricing = Arc::new(ch_core::pricing::load_user_pricing());
+    let agent_runtime = AgentRuntime::new(router.clone(), hub.bus.clone(), plugins_dir, pricing);
 
     // Load all plugins from disk
     agent_runtime.load_all().await?;

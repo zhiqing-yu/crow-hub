@@ -8,6 +8,7 @@ use std::sync::Arc;
 pub mod bus;
 pub mod channel;
 pub mod config;
+pub mod pricing;
 pub mod orchestrator;
 pub mod registry;
 pub mod session;

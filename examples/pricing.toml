@@ -1,0 +1,36 @@
+# Per-million-token rates in USD.  Edit to match your provider's
+# pricing.  Missing models cost $0.0 (silently — no panic).
+#
+# Match is by model substring (case-insensitive), most-specific first.
+# Empty file = no costs displayed.
+
+[[rates]]
+model = "claude-opus"
+input_per_mtok = 15.00
+output_per_mtok = 75.00
+
+[[rates]]
+model = "claude-sonnet"
+input_per_mtok = 3.00
+output_per_mtok = 15.00
+
+[[rates]]
+model = "claude-haiku"
+input_per_mtok = 0.25
+output_per_mtok = 1.25
+
+[[rates]]
+model = "gemini-2.0-pro"
+input_per_mtok = 1.25
+output_per_mtok = 5.00
+
+[[rates]]
+model = "kimi-code"
+input_per_mtok = 0.15
+output_per_mtok = 2.50
+
+# Fallback for anything else
+[[rates]]
+model = ""
+input_per_mtok = 0.0
+output_per_mtok = 0.0

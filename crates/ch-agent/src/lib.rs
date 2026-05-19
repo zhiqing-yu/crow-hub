@@ -93,6 +93,7 @@ pub enum AgentActivity {
         last_latency_ms: Option<u64>,
         cumulative_tokens_in: u64,
         cumulative_tokens_out: u64,
+        cumulative_cost_usd: f64,
     },
     /// Agent is currently processing a request.
     Thinking { since: DateTime<Utc> },

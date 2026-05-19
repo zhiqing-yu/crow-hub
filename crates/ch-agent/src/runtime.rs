@@ -8,7 +8,7 @@ use crate::host_env::{HostEnvCache, HostKey};
 use crate::loader::{LoadedPlugin, PluginLoader};
 use crate::manifest::{DriverType, ShellType};
 use crate::{AgentActivity, AgentError, AgentInfo, AgentState, Result};
-use ch_core::{ChannelVisibility, MessageBus};
+use ch_core::{ChannelVisibility, MessageBus, pricing::PricingTable};
 use ch_model::{ChatRequest, ChatStreamChunk, ModelRouter};
 use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload};
 use chrono::Utc;
@@ -39,6 +39,8 @@ pub struct AgentRuntime {
     bus: Arc<MessageBus>,
     /// Plugins directory
     plugins_dir: PathBuf,
+    /// Pricing table for cost estimation
+    pricing: Arc<PricingTable>,
 }
 
 /// An agent entry in the runtime
@@ -59,6 +61,7 @@ impl AgentRuntime {
         router: Arc<ModelRouter>,
         bus: Arc<MessageBus>,
         plugins_dir: impl Into<PathBuf>,
+        pricing: Arc<PricingTable>,
     ) -> Self {
         Self {
             agents: DashMap::new(),
@@ -68,6 +71,7 @@ impl AgentRuntime {
             router,
             bus,
             plugins_dir: plugins_dir.into(),
+            pricing,
         }
     }
 
@@ -201,6 +205,7 @@ impl AgentRuntime {
         let default_model_for_task = default_model.unwrap_or_else(|| "default".to_string());
         let handler_channels = channels;
         let activities = self.activities.clone();
+        let pricing = self.pricing.clone();
 
         tokio::spawn(async move {
             use futures::stream::StreamExt;
@@ -339,26 +344,29 @@ impl AgentRuntime {
                             );
                         } else if !errored {
                             // Accumulate tokens from previous requests
-                            let (prev_in, prev_out) = match activities.get(&agent_name) {
+                            let (prev_in, prev_out, prev_cost) = match activities.get(&agent_name) {
                                 Some(entry) => match &*entry {
                                     AgentActivity::Idle {
                                         cumulative_tokens_in,
                                         cumulative_tokens_out,
+                                        cumulative_cost_usd,
                                         ..
-                                    } => (*cumulative_tokens_in, *cumulative_tokens_out),
-                                    _ => (0, 0),
+                                    } => (*cumulative_tokens_in, *cumulative_tokens_out, *cumulative_cost_usd),
+                                    _ => (0, 0, 0.0),
                                 },
-                                _ => (0, 0),
+                                _ => (0, 0, 0.0),
                             };
                             let usage_ref = last_usage.as_ref();
                             let new_in = usage_ref.map(|u| u.input_tokens).unwrap_or(0);
                             let new_out = usage_ref.map(|u| u.output_tokens).unwrap_or(0);
+                            let new_cost = pricing.cost(&default_model_for_task, new_in, new_out);
                             activities.insert(
                                 agent_name.clone(),
                                 AgentActivity::Idle {
                                     last_latency_ms: first_chunk_latency_ms,
                                     cumulative_tokens_in: prev_in + new_in,
                                     cumulative_tokens_out: prev_out + new_out,
+                                    cumulative_cost_usd: prev_cost + new_cost,
                                 },
                             );
                         }
@@ -583,7 +591,7 @@ auto_join = ["general"]
         )
         .unwrap();
 
-        let runtime = AgentRuntime::new(router, bus, tmp.path());
+        let runtime = AgentRuntime::new(router, bus, tmp.path(), Arc::new(PricingTable::default()));
         let loaded = runtime.load_all().await.unwrap();
 
         assert_eq!(loaded.len(), 1);
@@ -624,7 +632,7 @@ default = "m1"
             .unwrap();
         }
 
-        let runtime = AgentRuntime::new(router, bus, tmp.path());
+        let runtime = AgentRuntime::new(router, bus, tmp.path(), Arc::new(PricingTable::default()));
         runtime.load_all().await.unwrap();
 
         let agents = runtime.list_agents();
@@ -634,7 +642,7 @@ default = "m1"
     #[tokio::test]
     async fn test_agent_not_found() {
         let (_tmp, router, bus) = setup_test_env().await;
-        let runtime = AgentRuntime::new(router, bus, PathBuf::from("."));
+        let runtime = AgentRuntime::new(router, bus, PathBuf::from("."), Arc::new(PricingTable::default()));
         let result = runtime
             .chat("nonexistent", ChatRequest::simple("m", "hi"))
             .await;

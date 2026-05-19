@@ -698,6 +698,7 @@ fn render_activity(activity: &AgentActivity, tick: u64) -> (&'static str, Color,
             last_latency_ms,
             cumulative_tokens_in,
             cumulative_tokens_out,
+            cumulative_cost_usd,
         } => {
             let mut suffix = match last_latency_ms {
                 Some(ms) => format_latency(*ms),
@@ -706,6 +707,10 @@ fn render_activity(activity: &AgentActivity, tick: u64) -> (&'static str, Color,
             if *cumulative_tokens_in > 0 || *cumulative_tokens_out > 0 {
                 use std::fmt::Write;
                 let _ = write!(suffix, "·{}/{}", format_tokens(*cumulative_tokens_in), format_tokens(*cumulative_tokens_out));
+            }
+            if *cumulative_cost_usd > 0.0 {
+                use std::fmt::Write;
+                let _ = write!(suffix, "·${:.2}", cumulative_cost_usd);
             }
             ("●", Color::Green, suffix)
         }
@@ -848,6 +853,7 @@ mod tests {
             last_latency_ms: Some(780),
             cumulative_tokens_in: 0,
             cumulative_tokens_out: 0,
+            cumulative_cost_usd: 0.0,
         }, 0);
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "780ms");
@@ -859,6 +865,7 @@ mod tests {
             last_latency_ms: Some(18_600),
             cumulative_tokens_in: 22279,
             cumulative_tokens_out: 284,
+            cumulative_cost_usd: 0.0,
         }, 0);
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "18.6s·22k/284");
@@ -870,6 +877,7 @@ mod tests {
             last_latency_ms: Some(100),
             cumulative_tokens_in: 0,
             cumulative_tokens_out: 0,
+            cumulative_cost_usd: 0.0,
         }, 0);
         assert!(!suffix.contains("·"), "no token suffix when both zero");
     }
