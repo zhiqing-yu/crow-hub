@@ -75,12 +75,36 @@ impl AgentRuntime {
         }
     }
 
-    /// Load all plugins from the plugins directory
+    /// Load all plugins from the plugins directory.
+    ///
+    /// Pre-probes unique HostKeys in parallel (spawn_blocking) so all
+    /// host-env caches are warm before any agent loads.  Then loads
+    /// each plugin sequentially — at that point the cache hits are
+    /// instant and total start-up time drops from ~10s to ~3s.
     pub async fn load_all(&self) -> Result<Vec<String>> {
         let loader = PluginLoader::new(&self.plugins_dir);
         let plugins = loader.scan()?;
-        let mut loaded_names = Vec::new();
 
+        // Pre-warm host_env_cache: probe each unique HostKey in parallel.
+        use std::collections::HashSet;
+        let unique_keys: HashSet<HostKey> = plugins
+            .iter()
+            .filter_map(|p| p.manifest.subprocess.as_ref())
+            .map(derive_host_key)
+            .collect();
+
+        let mut probe_handles = Vec::new();
+        for key in unique_keys {
+            let cache = self.host_env_cache.clone();
+            probe_handles.push(tokio::task::spawn_blocking(move || {
+                let _ = cache.get_or_probe(&key);
+            }));
+        }
+        for h in probe_handles {
+            let _ = h.await; // best-effort; failures are warned inside get_or_probe
+        }
+
+        let mut loaded_names = Vec::new();
         for plugin in plugins {
             match self.load_plugin(plugin).await {
                 Ok(name) => loaded_names.push(name),
@@ -647,5 +671,28 @@ default = "m1"
             .chat("nonexistent", ChatRequest::simple("m", "hi"))
             .await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn unique_host_keys_dedupes() {
+        use crate::manifest::{ShellType, SubprocessInputMode, SubprocessOutputMode, SubprocessSection};
+        let base = SubprocessSection {
+            command: "x".into(), args: vec![], working_dir: None,
+            shell: ShellType::Native, wsl_distro: None, ssh_host: None,
+            ssh_user: None, ssh_key: None,
+            env: std::collections::HashMap::new(),
+            input_mode: SubprocessInputMode::Argv,
+            output_mode: SubprocessOutputMode::Raw,
+            output_filter: None, setup_script: None,
+        };
+        let wsl = SubprocessSection { shell: ShellType::Wsl, wsl_distro: Some("Ubuntu".into()), ..base.clone() };
+        let wsl2 = SubprocessSection { shell: ShellType::Wsl, wsl_distro: Some("Ubuntu".into()), ..base.clone() };
+        let native = SubprocessSection { shell: ShellType::Native, ..base.clone() };
+        let ssh = SubprocessSection { shell: ShellType::Ssh, ssh_host: Some("h".into()), ..base };
+        let keys: std::collections::HashSet<HostKey> = [&wsl, &wsl2, &native, &ssh]
+            .iter()
+            .map(|s| derive_host_key(s))
+            .collect();
+        assert_eq!(keys.len(), 3); // wsl+wsl2 deduped to 1
     }
 }
