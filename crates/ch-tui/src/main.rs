@@ -8,6 +8,7 @@ use tracing::info;
 
 mod app;
 mod setup;
+mod theme;
 
 #[derive(Parser)]
 #[command(name = "crow")]

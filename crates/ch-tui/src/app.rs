@@ -3,6 +3,7 @@ use ch_agent::{AgentActivity, AgentInfo, AgentRuntime};
 use ch_core::MessageBus;
 use ch_memory::MemoryStore;
 use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload, MemoryEntry};
+use crate::theme::Theme;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -60,6 +61,8 @@ pub struct App {
     pub memory_rows: Vec<MemoryEntry>,
     /// Scroll offset for the memory panel
     pub memory_scroll_offset: usize,
+    /// Active theme
+    pub theme: Theme,
 }
 
 impl App {
@@ -92,6 +95,7 @@ impl App {
             memory_store,
             memory_rows: Vec::new(),
             memory_scroll_offset: 0,
+            theme: crate::theme::from_env(),
         }
     }
 
@@ -489,7 +493,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .enumerate()
         .map(|(i, a)| {
             let activity = app.runtime.activity_of(&a.name);
-            let (glyph, glyph_color, suffix) = render_activity(&activity, app.tick_count);
+            let (glyph, glyph_color, suffix) = render_activity(&activity, app.tick_count, &app.theme);
 
             let selected = i == app.selected_agent;
             let multi = app.multi_selected.contains(&i);
@@ -498,9 +502,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             // multi-selected, so the single-agent default view stays compact.
             let multi_box: Option<Span> = if any_multi {
                 if multi {
-                    Some(Span::styled("[✓] ", Style::default().fg(Color::Yellow)))
+                    Some(Span::styled("[✓] ", Style::default().fg(app.theme.agent_multi)))
                 } else {
-                    Some(Span::styled("[ ] ", Style::default().fg(Color::DarkGray)))
+                    Some(Span::styled("[ ] ", Style::default().fg(app.theme.agent_multi_dim)))
                 }
             } else {
                 None
@@ -508,9 +512,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
             let mut name_style = Style::default();
             if multi {
-                name_style = name_style.fg(Color::Yellow);
+                name_style = name_style.fg(app.theme.agent_multi);
             } else if selected {
-                name_style = name_style.add_modifier(Modifier::BOLD).fg(Color::Cyan);
+                name_style = name_style.add_modifier(Modifier::BOLD).fg(app.theme.agent_cursor);
             }
 
             let mut spans = Vec::new();
@@ -522,7 +526,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             if !suffix.is_empty() {
                 spans.push(Span::styled(
                     format!("{} ", suffix),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(app.theme.suffix),
                 ));
             }
             spans.push(Span::styled(a.name.clone(), name_style));
@@ -534,7 +538,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .borders(Borders::ALL)
         .title(format!("Agents  v{}", env!("CARGO_PKG_VERSION")));
     if app.focused_panel == FocusedPanel::Agents {
-        agents_block = agents_block.border_style(Style::default().fg(Color::LightBlue));
+        agents_block = agents_block.border_style(Style::default().fg(app.theme.border_focused));
     }
 
     // Render the panel block (border + title) ONCE, then split its inner
@@ -555,7 +559,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .split(inner);
 
     let summary_par = Paragraph::new(summary)
-        .style(Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))
+        .style(Style::default().fg(app.theme.summary).add_modifier(Modifier::ITALIC))
         .alignment(ratatui::layout::Alignment::Center);
     f.render_widget(summary_par, agent_chunks[0]);
 
@@ -571,7 +575,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .borders(Borders::ALL)
         .title("Channel: #general");
     if app.focused_panel == FocusedPanel::Chat {
-        messages_block = messages_block.border_style(Style::default().fg(Color::LightBlue));
+        messages_block = messages_block.border_style(Style::default().fg(app.theme.border_focused));
     }
 
     let inner_area = messages_block.inner(right_chunks[0]);
@@ -584,7 +588,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             .borders(Borders::ALL)
             .title(format!("Memory  (last {}, ↑↓:scroll)", app.memory_rows.len()));
         if app.focused_panel == FocusedPanel::Memory {
-            mem_block = mem_block.border_style(Style::default().fg(Color::LightBlue));
+            mem_block = mem_block.border_style(Style::default().fg(app.theme.border_focused));
         }
 
         let mem_items: Vec<ListItem> = app
@@ -653,7 +657,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .borders(Borders::ALL)
         .title("Input (Press Tab to switch focus)");
     if app.focused_panel == FocusedPanel::Input {
-        input_block = input_block.border_style(Style::default().fg(Color::LightBlue));
+        input_block = input_block.border_style(Style::default().fg(app.theme.border_focused));
     }
     let input_par = Paragraph::new(app.input.as_str())
         .block(input_block)
@@ -669,7 +673,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         FocusedPanel::Memory => "↑↓:scroll  r:refresh  Tab:next  Ctrl+C:quit",
     };
     let footer = Paragraph::new(shortcuts)
-        .style(Style::default().fg(Color::DarkGray).bg(Color::Black))
+        .style(Style::default().fg(app.theme.footer).bg(Color::Black))
         .alignment(ratatui::layout::Alignment::Center);
     f.render_widget(footer, footer_area);
 }
@@ -691,9 +695,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 /// Braille spinner frames for animated thinking indicator
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-fn render_activity(activity: &AgentActivity, tick: u64) -> (&'static str, Color, String) {
+fn render_activity(activity: &AgentActivity, tick: u64, theme: &Theme) -> (&'static str, Color, String) {
     match activity {
-        AgentActivity::Unknown => ("○", Color::DarkGray, String::new()),
+        AgentActivity::Unknown => ("○", theme.status_unknown, String::new()),
         AgentActivity::Idle {
             last_latency_ms,
             cumulative_tokens_in,
@@ -712,16 +716,15 @@ fn render_activity(activity: &AgentActivity, tick: u64) -> (&'static str, Color,
                 use std::fmt::Write;
                 let _ = write!(suffix, "·${:.2}", cumulative_cost_usd);
             }
-            ("●", Color::Green, suffix)
+            ("●", theme.status_idle, suffix)
         }
         AgentActivity::Thinking { since } => {
             let elapsed_secs = (chrono::Utc::now() - *since).num_seconds().max(0);
             let suffix = format!("{}s…", elapsed_secs);
-            // Animated braille spinner: cycles through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
             let glyph = SPINNER[(tick as usize / 3) % SPINNER.len()];
-            (glyph, Color::Yellow, suffix)
+            (glyph, theme.status_thinking, suffix)
         }
-        AgentActivity::Errored { .. } => ("✗", Color::Red, "err".to_string()),
+        AgentActivity::Errored { .. } => ("✗", theme.status_errored, "err".to_string()),
     }
 }
 
@@ -842,7 +845,7 @@ mod tests {
 
     #[test]
     fn render_activity_unknown_has_empty_suffix() {
-        let (glyph, _, suffix) = render_activity(&AgentActivity::Unknown, 0);
+        let (glyph, _, suffix) = render_activity(&AgentActivity::Unknown, 0, &crate::theme::from_env());
         assert_eq!(glyph, "○");
         assert_eq!(suffix, "");
     }
@@ -854,7 +857,7 @@ mod tests {
             cumulative_tokens_in: 0,
             cumulative_tokens_out: 0,
             cumulative_cost_usd: 0.0,
-        }, 0);
+        }, 0, &crate::theme::from_env());
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "780ms");
     }
@@ -866,7 +869,7 @@ mod tests {
             cumulative_tokens_in: 22279,
             cumulative_tokens_out: 284,
             cumulative_cost_usd: 0.0,
-        }, 0);
+        }, 0, &crate::theme::from_env());
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "18.6s·22k/284");
     }
@@ -878,7 +881,7 @@ mod tests {
             cumulative_tokens_in: 0,
             cumulative_tokens_out: 0,
             cumulative_cost_usd: 0.0,
-        }, 0);
+        }, 0, &crate::theme::from_env());
         assert!(!suffix.contains("·"), "no token suffix when both zero");
     }
 
@@ -895,7 +898,7 @@ mod tests {
     fn render_activity_errored_shows_err_suffix() {
         let (glyph, _, suffix) = render_activity(&AgentActivity::Errored {
             last_error: "boom".into(),
-        }, 0);
+        }, 0, &crate::theme::from_env());
         assert_eq!(glyph, "✗");
         assert_eq!(suffix, "err");
     }
