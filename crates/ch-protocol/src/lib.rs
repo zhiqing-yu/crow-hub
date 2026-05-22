@@ -119,6 +119,9 @@ pub struct AgentMessage {
     pub priority: Priority,
     /// Time-to-live in seconds
     pub ttl: Option<u32>,
+    /// Optional per-message model override
+    #[serde(default)]
+    pub model_override: Option<String>,
 }
 
 impl AgentMessage {
@@ -141,7 +144,14 @@ impl AgentMessage {
             memory_context: Vec::new(),
             priority: Priority::Normal,
             ttl: None,
+            model_override: None,
         }
+    }
+
+    /// Set model override for this message
+    pub fn with_model_override(mut self, model: String) -> Self {
+        self.model_override = Some(model);
+        self
     }
 
     /// Set correlation ID for request-response pattern

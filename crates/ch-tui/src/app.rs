@@ -64,6 +64,8 @@ pub struct App {
     /// Active theme
     pub theme: Theme,
     pub default_model: String,
+    /// /all forces global view even when single agent selected
+    pub chat_scope_all: bool,
 }
 
 impl App {
@@ -98,6 +100,7 @@ impl App {
             memory_scroll_offset: 0,
             theme: crate::theme::from_env(),
             default_model: String::new(),
+            chat_scope_all: false,
         }
     }
 
@@ -162,10 +165,15 @@ impl App {
                     self.messages.push(format!("/model — default model set to: {}", arg));
                 }
             }
+            "/all" => {
+                self.chat_scope_all = true;
+                self.messages.push("── Showing all agents (/all off — switch agent to scope) ──".into());
+                self.chat_scroll_offset = 0;
+            }
             "/help" => {
                 self.messages.push("┈┈┈ Slash Commands ┈┈┈".into());
                 self.messages.push("/clear              Clear chat history".into());
-                self.messages.push("/model <name>       Set default model for messages".into());
+                self.messages.push("/model <name>       Override model for next messages (blank to show)".into());
                 self.messages.push("/help               Show this help".into());
                 self.messages.push("┈┈┈ Keyboard Shortcuts ┈┈┈".into());
                 self.messages.push("Tab         Switch panel (Agents→Chat→Memory→Input)".into());
@@ -342,6 +350,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             FocusedPanel::Agents => {
                                 if app.selected_agent > 0 {
                                     app.selected_agent -= 1;
+                                    app.chat_scope_all = false;
                                 }
                             }
                             FocusedPanel::Chat => {
@@ -358,6 +367,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             FocusedPanel::Agents => {
                                 if app.selected_agent + 1 < app.agents.len() {
                                     app.selected_agent += 1;
+                                    app.chat_scope_all = false;
                                 }
                             }
                             FocusedPanel::Chat => {
@@ -414,6 +424,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 // Fan out: one tokio task per target, all
                                 // independent.  The bus dispatches each
                                 // message to its addressed agent in parallel.
+                                let mo = if app.default_model.is_empty() { None } else { Some(app.default_model.clone()) };
                                 for agent_name in targets {
                                     send_prompt_to_agent(
                                         &runtime,
@@ -421,6 +432,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                         user_id,
                                         agent_name,
                                         prompt.clone(),
+                                        mo.clone(),
                                     );
                                 }
 
@@ -459,6 +471,7 @@ fn send_prompt_to_agent(
     user_id: AgentId,
     agent_name: String,
     prompt: String,
+    model_override: Option<String>,
 ) {
     let target_addr = runtime.get_agent_id(&agent_name).map(|id| AgentAddress {
         agent_id: id,
@@ -470,12 +483,15 @@ fn send_prompt_to_agent(
         agent_name: "You".to_string(),
         adapter_type: "tui".to_string(),
     };
-    let bus_msg = AgentMessage::new(
+    let mut bus_msg = AgentMessage::new(
         from_addr,
         target_addr,
         MessageType::TaskRequest,
         Payload::Text(prompt),
     );
+    if let Some(m) = model_override {
+        bus_msg = bus_msg.with_model_override(m);
+    }
 
     tokio::spawn(async move {
         if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
@@ -687,7 +703,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         // ── Chat Panel ──────────────────────────────────────────
         // Scoped view: when a single agent is selected (no multi),
         // only show messages from that agent + user messages.
-        let scope_agent = if app.multi_selected.is_empty() && !app.agents.is_empty() {
+        let scope_agent = if app.chat_scope_all || !app.multi_selected.is_empty() {
+            None
+        } else if !app.agents.is_empty() {
             app.agents.get(app.selected_agent).map(|a| a.name.as_str())
         } else {
             None

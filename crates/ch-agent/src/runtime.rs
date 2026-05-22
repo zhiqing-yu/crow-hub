@@ -252,7 +252,7 @@ impl AgentRuntime {
 
                 // Clone the driver Arc (don't hold any DashMap guard across await)
                 let driver = driver.clone();
-                let model = default_model_for_task.clone();
+                let model = msg.model_override.clone().unwrap_or_else(|| default_model_for_task.clone());
                 let correlation_id = msg.message_id;
 
                 let from_addr = AgentAddress {

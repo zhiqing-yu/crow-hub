@@ -3,6 +3,7 @@ use ch_core::bus::MessageBus;
 use ch_core::channel::ChannelVisibility;
 use ch_protocol::{AgentId, MemoryEntry, MessageType, Payload};
 use std::sync::Arc;
+use tracing::{info, warn};
 
 pub fn spawn_memory_writer(
     bus: Arc<MessageBus>,
@@ -12,6 +13,7 @@ pub fn spawn_memory_writer(
     tokio::spawn(async move {
         let mut rx = bus.subscribe(writer_id).await;
         let _ = bus.join_channel("general", writer_id, ChannelVisibility::Full);
+        info!("memory writer subscribed to general channel");
 
         while let Some(msg) = rx.recv().await {
             if let Payload::Text(ref text) = msg.payload {
@@ -56,7 +58,9 @@ pub fn spawn_memory_writer(
                         updated_at: msg.timestamp,
                     };
 
-                    let _ = store.write(memory).await;
+                    if let Err(e) = store.write(memory).await {
+                        warn!("memory writer: failed to persist message: {}", e);
+                    }
                 }
             }
         }
