@@ -63,6 +63,7 @@ pub struct App {
     pub memory_scroll_offset: usize,
     /// Active theme
     pub theme: Theme,
+    pub default_model: String,
 }
 
 impl App {
@@ -96,6 +97,7 @@ impl App {
             memory_rows: Vec::new(),
             memory_scroll_offset: 0,
             theme: crate::theme::from_env(),
+            default_model: String::new(),
         }
     }
 
@@ -136,6 +138,49 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Handle a slash command.  Returns true if input was consumed.
+    pub fn handle_slash_command(&mut self) -> bool {
+        let cmd = self.input.trim().to_string();
+        let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+        let verb = parts[0].to_lowercase();
+        let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
+
+        match verb.as_str() {
+            "/clear" => {
+                self.messages.clear();
+                self.messages.push("Chat cleared.".into());
+                self.chat_scroll_offset = 0;
+            }
+            "/model" => {
+                if arg.is_empty() {
+                    let current = if self.default_model.is_empty() { "none" } else { &self.default_model };
+                    self.messages.push(format!("/model — current: {}  (usage: /model <name>)", current));
+                } else {
+                    self.default_model = arg.to_string();
+                    self.messages.push(format!("/model — default model set to: {}", arg));
+                }
+            }
+            "/help" => {
+                self.messages.push("┈┈┈ Slash Commands ┈┈┈".into());
+                self.messages.push("/clear              Clear chat history".into());
+                self.messages.push("/model <name>       Set default model for messages".into());
+                self.messages.push("/help               Show this help".into());
+                self.messages.push("┈┈┈ Keyboard Shortcuts ┈┈┈".into());
+                self.messages.push("Tab         Switch panel (Agents→Chat→Memory→Input)".into());
+                self.messages.push("↑↓          Navigate / scroll".into());
+                self.messages.push("Space       Multi-select agent (Agents panel)".into());
+                self.messages.push("Enter       Send message".into());
+                self.messages.push("Ctrl+C      Quit".into());
+            }
+            _ => {
+                self.messages.push(format!("Unknown command: {}  (try /help)", verb));
+            }
+        }
+        self.input.clear();
+        self.chat_scroll_offset = 0;
+        true
     }
 
     pub fn on_tick(&mut self) {
@@ -351,9 +396,9 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                         }
                         KeyCode::Enter => {
                             if is_fast {
-                                // Un-bracketed paste detection: If Enter arrives too quickly
-                                // after another character, treat it as a pasted newline (space).
                                 app.input.push(' ');
+                            } else if app.input.starts_with('/') {
+                                app.handle_slash_command();
                             } else if !app.input.is_empty() {
                                 let prompt = app.input.clone();
                                 app.messages.push(format!("You: {}", prompt));
@@ -530,7 +575,18 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 ));
             }
             spans.push(Span::styled(a.name.clone(), name_style));
-            ListItem::new(Line::from(spans))
+            // Second line: model name in dim text (if known)
+            let model_line = a.default_model.as_ref().map(|m| {
+                Line::from(Span::styled(
+                    format!("   {}", m),
+                    Style::default().fg(Color::DarkGray),
+                ))
+            });
+            if let Some(ml) = model_line {
+                ListItem::new(vec![Line::from(spans), ml])
+            } else {
+                ListItem::new(Line::from(spans))
+            }
         })
         .collect();
 
@@ -629,10 +685,24 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         f.render_widget(mem_list, right_chunks[0]);
     } else {
         // ── Chat Panel ──────────────────────────────────────────
+        // Scoped view: when a single agent is selected (no multi),
+        // only show messages from that agent + user messages.
+        let scope_agent = if app.multi_selected.is_empty() && !app.agents.is_empty() {
+            app.agents.get(app.selected_agent).map(|a| a.name.as_str())
+        } else {
+            None
+        };
+
         let mut all_lines: Vec<String> = Vec::new();
         for m in &app.messages {
-            let wrapped = wrap_text(m, width);
-            all_lines.extend(wrapped);
+            let show = match scope_agent {
+                Some(name) => m.starts_with("You:") || m.starts_with(&format!("{}:", name)),
+                None => true,
+            };
+            if show {
+                let wrapped = wrap_text(m, width);
+                all_lines.extend(wrapped);
+            }
         }
 
         let max_scroll = all_lines.len().saturating_sub(height);
