@@ -33,6 +33,14 @@ pub enum FocusedPanel {
     Memory,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Tab {
+    Agents,
+    Chat,
+    Monitor,
+    Memory,
+}
+
 /// App state
 pub struct App {
     pub runtime: Arc<AgentRuntime>,
@@ -64,6 +72,8 @@ pub struct App {
     /// Active theme
     pub theme: Theme,
     pub default_model: String,
+    /// Tab bar selection
+    pub active_tab: Tab,
     /// /all forces global view even when single agent selected
     pub chat_scope_all: bool,
 }
@@ -100,6 +110,7 @@ impl App {
             memory_scroll_offset: 0,
             theme: crate::theme::from_env(),
             default_model: String::new(),
+            active_tab: Tab::Chat,
             chat_scope_all: false,
         }
     }
@@ -325,13 +336,19 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                         }
                         KeyCode::Esc => app.should_quit = true,
                         KeyCode::Tab => {
-                            app.focused_panel = match app.focused_panel {
-                                FocusedPanel::Input => FocusedPanel::Agents,
-                                FocusedPanel::Agents => FocusedPanel::Chat,
-                                FocusedPanel::Chat => FocusedPanel::Memory,
-                                FocusedPanel::Memory => FocusedPanel::Input,
+                            // Tab bar: cycle through tabs
+                            app.active_tab = match app.active_tab {
+                                Tab::Agents => Tab::Chat,
+                                Tab::Chat => Tab::Monitor,
+                                Tab::Monitor => Tab::Memory,
+                                Tab::Memory => Tab::Agents,
                             };
-                            if app.focused_panel == FocusedPanel::Memory {
+                            // Auto-focus appropriate panel
+                            app.focused_panel = match app.active_tab {
+                                Tab::Agents => FocusedPanel::Agents,
+                                _ => FocusedPanel::Input,
+                            };
+                            if app.active_tab == Tab::Memory {
                                 app.refresh_memory();
                             }
                         }
@@ -342,7 +359,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 FocusedPanel::Chat => FocusedPanel::Agents,
                                 FocusedPanel::Agents => FocusedPanel::Input,
                             };
-                            if app.focused_panel == FocusedPanel::Memory {
+                            if app.active_tab == Tab::Memory {
                                 app.refresh_memory();
                             }
                         }
@@ -501,13 +518,14 @@ fn send_prompt_to_agent(
 }
 
 fn ui(f: &mut ratatui::Frame, app: &App) {
-    // Split screen: main area + 1-line footer
-    let main_footer = Layout::default()
+    // Split screen: tab bar + main area + footer
+    let tab_main = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)].as_ref())
+        .constraints([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)].as_ref())
         .split(f.size());
-    let main_area = main_footer[0];
-    let footer_area = main_footer[1];
+    let tab_area = tab_main[0];
+    let main_area = tab_main[1];
+    let footer_area = tab_main[2];
 
     // Left panel for agents, main panel for chat, bottom panel for input
     let chunks = Layout::default()
@@ -519,6 +537,24 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(7)].as_ref())
         .split(chunks[1]);
+
+    // ── Tab Bar ─────────────────────────────────────────────────
+    let tabs = [
+        ("Agents",  Tab::Agents),
+        ("Chat",    Tab::Chat),
+        ("Monitor", Tab::Monitor),
+        ("Memory",  Tab::Memory),
+    ];
+    let tab_spans: Vec<Span> = tabs.iter().map(|(label, tab)| {
+        if app.active_tab == *tab {
+            Span::styled(format!(" {} ", label),
+                Style::default().fg(Color::Black).bg(app.theme.border_focused).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled(format!(" {} ", label),
+                Style::default().fg(Color::Gray))
+        }
+    }).collect();
+    f.render_widget(Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(Color::Black)), tab_area);
 
     // 1a. Agent status summary — quick overview at top of panel
     let (mut thinking, mut idle, mut errored, mut unknown) = (0u32, 0u32, 0u32, 0u32);
@@ -654,12 +690,12 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
 
-    if app.focused_panel == FocusedPanel::Memory {
+    if app.active_tab == Tab::Memory {
         // ── Memory Panel ────────────────────────────────────────
         let mut mem_block = Block::default()
             .borders(Borders::ALL)
             .title(format!("Memory  (last {}, ↑↓:scroll)", app.memory_rows.len()));
-        if app.focused_panel == FocusedPanel::Memory {
+        if app.active_tab == Tab::Memory {
             mem_block = mem_block.border_style(Style::default().fg(app.theme.border_focused));
         }
 
