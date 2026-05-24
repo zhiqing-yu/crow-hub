@@ -36,10 +36,7 @@ pub fn spawn_memory_writer(
                         match serde_json::to_string(env) {
                             Ok(json) => (json, "handoff".to_string()),
                             Err(e) => {
-                                warn!(
-                                    "memory writer: failed to serialise handoff envelope: {}",
-                                    e
-                                );
+                                warn!("memory writer: failed to serialise handoff envelope: {}", e);
                                 continue;
                             }
                         }

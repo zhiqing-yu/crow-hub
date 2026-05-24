@@ -80,10 +80,26 @@ mod tests {
     fn sample_table() -> PricingTable {
         PricingTable {
             rates: vec![
-                Rate { model: "claude-opus".into(), input_per_mtok: 15.0, output_per_mtok: 75.0 },
-                Rate { model: "claude-sonnet".into(), input_per_mtok: 3.0, output_per_mtok: 15.0 },
-                Rate { model: "gemini".into(), input_per_mtok: 1.25, output_per_mtok: 5.0 },
-                Rate { model: "".into(), input_per_mtok: 0.0, output_per_mtok: 0.0 },
+                Rate {
+                    model: "claude-opus".into(),
+                    input_per_mtok: 15.0,
+                    output_per_mtok: 75.0,
+                },
+                Rate {
+                    model: "claude-sonnet".into(),
+                    input_per_mtok: 3.0,
+                    output_per_mtok: 15.0,
+                },
+                Rate {
+                    model: "gemini".into(),
+                    input_per_mtok: 1.25,
+                    output_per_mtok: 5.0,
+                },
+                Rate {
+                    model: "".into(),
+                    input_per_mtok: 0.0,
+                    output_per_mtok: 0.0,
+                },
             ],
         }
     }

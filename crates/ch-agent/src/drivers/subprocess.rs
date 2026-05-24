@@ -409,10 +409,9 @@ impl SubprocessDriver {
     ///   - Generic:  `input: N, output: N`
     fn extract_usage_from_stderr(&self, stderr: &str) -> Option<TokenUsage> {
         // Claude Code format
-        let re = regex::Regex::new(
-            r"Total tokens:\s*(\d+)\s*\(input:\s*(\d+),\s*output:\s*(\d+)\)",
-        )
-        .ok()?;
+        let re =
+            regex::Regex::new(r"Total tokens:\s*(\d+)\s*\(input:\s*(\d+),\s*output:\s*(\d+)\)")
+                .ok()?;
         if let Some(caps) = re.captures(stderr) {
             let input = caps.get(2)?.as_str().parse::<u64>().ok()?;
             let output = caps.get(3)?.as_str().parse::<u64>().ok()?;
@@ -423,10 +422,7 @@ impl SubprocessDriver {
             });
         }
         // Generic: "input: N ... output: N"
-        let re2 = regex::Regex::new(
-            r"(?:^|\s)input[^\d]*(\d+).*?output[^\d]*(\d+)",
-        )
-        .ok()?;
+        let re2 = regex::Regex::new(r"(?:^|\s)input[^\d]*(\d+).*?output[^\d]*(\d+)").ok()?;
         if let Some(caps) = re2.captures(stderr) {
             let input = caps.get(1)?.as_str().parse::<u64>().ok()?;
             let output = caps.get(2)?.as_str().parse::<u64>().ok()?;
@@ -549,14 +545,16 @@ impl AgentDriver for SubprocessDriver {
                     .unwrap_or_else(|| TokenUsage {
                         input_tokens: self.estimate_tokens(&prompt),
                         output_tokens: self.estimate_tokens(&content),
-                        total_tokens: self.estimate_tokens(&prompt) + self.estimate_tokens(&content),
+                        total_tokens: self.estimate_tokens(&prompt)
+                            + self.estimate_tokens(&content),
                     })
             } else {
                 self.extract_usage_from_stderr(&filtered_stderr)
                     .unwrap_or_else(|| TokenUsage {
                         input_tokens: self.estimate_tokens(&prompt),
                         output_tokens: self.estimate_tokens(&content),
-                        total_tokens: self.estimate_tokens(&prompt) + self.estimate_tokens(&content),
+                        total_tokens: self.estimate_tokens(&prompt)
+                            + self.estimate_tokens(&content),
                     })
             };
 
@@ -717,8 +715,7 @@ impl AgentDriver for SubprocessDriver {
             let prompt_len = prompt.len() as u64;
 
             // Track total output chars to estimate tokens at stream end
-            let total_output =
-                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let total_output = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let total_for_final = total_output.clone();
 
             let stream = stream::unfold((lines, child), move |(mut lines, mut child)| {

@@ -8,7 +8,7 @@ use crate::host_env::{HostEnvCache, HostKey};
 use crate::loader::{LoadedPlugin, PluginLoader};
 use crate::manifest::{DriverType, ShellType};
 use crate::{AgentActivity, AgentError, AgentInfo, AgentState, Result};
-use ch_core::{ChannelVisibility, MessageBus, pricing::PricingTable};
+use ch_core::{pricing::PricingTable, ChannelVisibility, MessageBus};
 use ch_model::{ChatRequest, ChatStreamChunk, ModelRouter};
 use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload};
 use chrono::Utc;
@@ -266,7 +266,10 @@ impl AgentRuntime {
 
                 // Clone the driver Arc (don't hold any DashMap guard across await)
                 let driver = driver.clone();
-                let model = msg.model_override.clone().unwrap_or_else(|| default_model_for_task.clone());
+                let model = msg
+                    .model_override
+                    .clone()
+                    .unwrap_or_else(|| default_model_for_task.clone());
                 let correlation_id = msg.message_id;
 
                 let from_addr = AgentAddress {
@@ -389,7 +392,11 @@ impl AgentRuntime {
                                         cumulative_tokens_out,
                                         cumulative_cost_usd,
                                         ..
-                                    } => (*cumulative_tokens_in, *cumulative_tokens_out, *cumulative_cost_usd),
+                                    } => (
+                                        *cumulative_tokens_in,
+                                        *cumulative_tokens_out,
+                                        *cumulative_cost_usd,
+                                    ),
                                     _ => (0, 0, 0.0),
                                 },
                                 _ => (0, 0, 0.0),
@@ -680,7 +687,12 @@ default = "m1"
     #[tokio::test]
     async fn test_agent_not_found() {
         let (_tmp, router, bus) = setup_test_env().await;
-        let runtime = AgentRuntime::new(router, bus, PathBuf::from("."), Arc::new(PricingTable::default()));
+        let runtime = AgentRuntime::new(
+            router,
+            bus,
+            PathBuf::from("."),
+            Arc::new(PricingTable::default()),
+        );
         let result = runtime
             .chat("nonexistent", ChatRequest::simple("m", "hi"))
             .await;
@@ -689,20 +701,43 @@ default = "m1"
 
     #[test]
     fn unique_host_keys_dedupes() {
-        use crate::manifest::{ShellType, SubprocessInputMode, SubprocessOutputMode, SubprocessSection};
+        use crate::manifest::{
+            ShellType, SubprocessInputMode, SubprocessOutputMode, SubprocessSection,
+        };
         let base = SubprocessSection {
-            command: "x".into(), args: vec![], working_dir: None,
-            shell: ShellType::Native, wsl_distro: None, ssh_host: None,
-            ssh_user: None, ssh_key: None,
+            command: "x".into(),
+            args: vec![],
+            working_dir: None,
+            shell: ShellType::Native,
+            wsl_distro: None,
+            ssh_host: None,
+            ssh_user: None,
+            ssh_key: None,
             env: std::collections::HashMap::new(),
             input_mode: SubprocessInputMode::Argv,
             output_mode: SubprocessOutputMode::Raw,
-            output_filter: None, setup_script: None,
+            output_filter: None,
+            setup_script: None,
         };
-        let wsl = SubprocessSection { shell: ShellType::Wsl, wsl_distro: Some("Ubuntu".into()), ..base.clone() };
-        let wsl2 = SubprocessSection { shell: ShellType::Wsl, wsl_distro: Some("Ubuntu".into()), ..base.clone() };
-        let native = SubprocessSection { shell: ShellType::Native, ..base.clone() };
-        let ssh = SubprocessSection { shell: ShellType::Ssh, ssh_host: Some("h".into()), ..base };
+        let wsl = SubprocessSection {
+            shell: ShellType::Wsl,
+            wsl_distro: Some("Ubuntu".into()),
+            ..base.clone()
+        };
+        let wsl2 = SubprocessSection {
+            shell: ShellType::Wsl,
+            wsl_distro: Some("Ubuntu".into()),
+            ..base.clone()
+        };
+        let native = SubprocessSection {
+            shell: ShellType::Native,
+            ..base.clone()
+        };
+        let ssh = SubprocessSection {
+            shell: ShellType::Ssh,
+            ssh_host: Some("h".into()),
+            ..base
+        };
         let keys: std::collections::HashSet<HostKey> = [&wsl, &wsl2, &native, &ssh]
             .iter()
             .map(|s| derive_host_key(s))
