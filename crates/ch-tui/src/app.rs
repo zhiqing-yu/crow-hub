@@ -293,13 +293,67 @@ impl App {
                         self.messages
                             .push("/evidence claim — usage: /evidence claim <text>".into());
                     }
+                    "verify" if !rest.is_empty() => {
+                        let id = rest.to_string();
+                        self.messages.push(format!("📋 You → verified: {}", id));
+                        let bus = self.bus.clone();
+                        let user_id = self.user_agent_id;
+                        let from_name = "You".to_string();
+                        let bus_msg = AgentMessage::new(
+                            AgentAddress { agent_id: user_id, agent_name: from_name, adapter_type: "tui".into() },
+                            None,
+                            MessageType::EvidenceVerify,
+                            Payload::EvidenceVerify(ch_protocol::EvidenceVerifyMsg {
+                                evidence_id: id,
+                                outcome: true,
+                                // verifier tracked via from.agent_name
+                                note: Some("verified manually in TUI".to_string()),
+                            }),
+                        );
+                        tokio::spawn(async move {
+                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
+                                tracing::error!("Failed to send evidence verify to bus: {}", e);
+                            }
+                        });
+                    }
+                    "verify" => {
+                        self.messages.push("/evidence verify — usage: /evidence verify <id>".into());
+                    }
+                    "fail" if !rest.is_empty() => {
+                        let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                        let id = parts[0].to_string();
+                        let reason = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| "failed manually in TUI".to_string());
+                        self.messages.push(format!("📋 You → failed: {} ({})", id, reason));
+                        let bus = self.bus.clone();
+                        let user_id = self.user_agent_id;
+                        let from_name = "You".to_string();
+                        let bus_msg = AgentMessage::new(
+                            AgentAddress { agent_id: user_id, agent_name: from_name, adapter_type: "tui".into() },
+                            None,
+                            MessageType::EvidenceVerify,
+                            Payload::EvidenceVerify(ch_protocol::EvidenceVerifyMsg {
+                                evidence_id: id,
+                                outcome: false,
+                                // verifier tracked via from.agent_name
+                                note: Some(reason),
+                            }),
+                        );
+                        tokio::spawn(async move {
+                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
+                                tracing::error!("Failed to send evidence fail to bus: {}", e);
+                            }
+                        });
+                    }
+                    "fail" => {
+                        self.messages.push("/evidence fail — usage: /evidence fail <id> <reason>".into());
+                    }
                     "" => {
                         self.messages
-                            .push("/evidence — usage: /evidence claim <text>".into());
+                            .push("/evidence — usage: /evidence claim|verify|fail ...".into());
                     }
                     other => {
                         self.messages.push(format!(
-                            "/evidence — unknown sub-command '{}' (try: claim)",
+                            "/evidence — unknown sub-command '{}' (try: claim, verify, fail)",
                             other
                         ));
                     }
@@ -367,7 +421,9 @@ pub(crate) fn help_lines() -> Vec<String> {
         "/model <name>       Override model for next messages (blank to show)".to_string(),
         "/all                Unscope chat (show all agents)".to_string(),
         "/handoff <summary>  Emit a Handoff envelope on the bus".to_string(),
-        "/evidence claim <text>  Emit an Evidence claim on the bus".to_string(),
+        "/evidence claim <text>   Emit an Evidence claim".to_string(),
+        "/evidence verify <id>    Verify evidence (manual)".to_string(),
+        "/evidence fail <id> <r>  Fail evidence (manual)".to_string(),
         "/help               Show this help".to_string(),
         "┈┈┈ Keyboard Shortcuts ┈┈┈".to_string(),
         "Tab         Switch panel (Agents→Chat→Memory→Input)".to_string(),

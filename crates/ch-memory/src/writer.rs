@@ -95,6 +95,7 @@ pub fn spawn_memory_writer(
 
             // Fall through to the chat/handoff dispatch — writes to the
             // `messages` table.
+            let mut handoff_env: Option<ch_protocol::HandoffEnvelope> = None;
             let (content_str, memory_type_str): (String, String) =
                 match (&msg.payload, &msg.message_type) {
                     (Payload::Text(text), MessageType::TaskRequest)
@@ -103,8 +104,12 @@ pub fn spawn_memory_writer(
                         (text.clone(), t)
                     }
                     (Payload::Handoff(env), MessageType::Handoff) => {
+                        let env_clone = env.clone();
                         match serde_json::to_string(env) {
-                            Ok(json) => (json, "handoff".to_string()),
+                            Ok(json) => {
+                                handoff_env = Some(env_clone);
+                                (json, "handoff".to_string())
+                            }
                             Err(e) => {
                                 warn!("memory writer: failed to serialise handoff envelope: {}", e);
                                 continue;
@@ -168,6 +173,37 @@ pub fn spawn_memory_writer(
                         "memory writer: failed to persist message (msg_id={}, from={}): {}",
                         msg_id, msg.from.agent_name, e
                     );
+                }
+            }
+
+            // Fan out Handoff decisions as pending Evidence rows
+            if let Some(env) = handoff_env {
+                if !env.decisions.is_empty() {
+                    let task_id = msg.correlation_id.map(|c| c.to_string())
+                        .unwrap_or_else(|| msg.message_id.to_string());
+                    let evidence_store = evidence_store.clone();
+                    for (idx, decision) in env.decisions.iter().enumerate() {
+                        let row = EvidenceRow {
+                            id: format!("{}-d{}", msg.message_id, idx),
+                            task_id: task_id.clone(),
+                            correlation_id: msg.correlation_id.map(|c| c.to_string()),
+                            agent_id: msg.from.agent_id,
+                            agent_name: msg.from.agent_name.clone(),
+                            claim: decision.clone(),
+                            status: EvidenceStatus::Pending,
+                            witness: None,
+                            metadata: serde_json::json!({
+                                "source": "handoff",
+                                "handoff_message_id": msg.message_id.to_string(),
+                            }),
+                            created_at: msg.timestamp,
+                            verified_at: None,
+                            verified_by: None,
+                        };
+                        if let Err(e) = evidence_store.write_evidence(row).await {
+                            warn!("memory writer: failed to fan out handoff evidence: {}", e);
+                        }
+                    }
                 }
             }
         }
