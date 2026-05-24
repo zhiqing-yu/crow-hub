@@ -74,6 +74,10 @@ pub enum MessageType {
     StatusHeartbeat,
     /// Metrics report
     StatusMetrics,
+    /// Structured task handoff between agents (summary + decisions + open
+    /// questions + continuation hint).  Inspired by Maestro's lifecycle
+    /// envelopes — see `docs/journals/2026-05-19_brainstorming_maestro_lessons.md`.
+    Handoff,
     /// Custom message type
     Custom(String),
 }
@@ -207,8 +211,45 @@ pub enum Payload {
     Metrics(MetricsData),
     /// Memory entry
     Memory(MemoryEntry),
+    /// Structured task handoff between agents
+    Handoff(HandoffEnvelope),
     /// Empty payload
     Empty,
+}
+
+/// Structured handoff envelope.
+///
+/// When an agent finishes a task (or wants to delegate one), it emits a
+/// `Handoff` envelope rather than a free-form `Text` reply.  The envelope
+/// captures the four things the next agent in the chain needs to pick up
+/// the work without re-reading the entire chat scrollback:
+///
+/// * `summary` — one-line plain-English description of what was done
+/// * `decisions` — short bullets the next agent should know about
+/// * `open_questions` — what still needs to be answered
+/// * `continuation_hint` — a concrete pointer to where to pick up
+///
+/// Inspired by Maestro's lifecycle envelopes (see the brainstorming doc
+/// at `docs/journals/2026-05-19_brainstorming_maestro_lessons.md`).
+///
+/// Persisted by the memory writer with `memory_type = "handoff"` and the
+/// envelope JSON-serialised into the existing `content` column — no
+/// schema migration needed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HandoffEnvelope {
+    /// Name of the agent emitting the handoff (e.g. "claude-wsl-ubuntu", "You")
+    pub from_agent: String,
+    /// One-line summary of what was accomplished
+    pub summary: String,
+    /// Key decisions made during the task
+    #[serde(default)]
+    pub decisions: Vec<String>,
+    /// Open questions for the next agent to resolve
+    #[serde(default)]
+    pub open_questions: Vec<String>,
+    /// Hint for where the next agent should pick up (e.g. "see PR #42", "step 3")
+    #[serde(default)]
+    pub continuation_hint: String,
 }
 
 /// Task specification
@@ -379,8 +420,93 @@ mod tests {
             memory_context: Vec::new(),
             priority: Priority::Normal,
             ttl: Some(50), // 50 seconds
+            model_override: None,
         };
 
         assert!(msg.is_expired());
+    }
+
+    // ── Handoff envelope ─────────────────────────────────────
+
+    #[test]
+    fn handoff_envelope_serde_round_trip() {
+        let env = HandoffEnvelope {
+            from_agent: "claude-wsl-ubuntu".to_string(),
+            summary: "Refactored auth module".to_string(),
+            decisions: vec!["use JWT not sessions".to_string()],
+            open_questions: vec!["add password reset?".to_string()],
+            continuation_hint: "see PR #42".to_string(),
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let back: HandoffEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.from_agent, "claude-wsl-ubuntu");
+        assert_eq!(back.summary, "Refactored auth module");
+        assert_eq!(back.decisions.len(), 1);
+        assert_eq!(back.open_questions.len(), 1);
+        assert_eq!(back.continuation_hint, "see PR #42");
+    }
+
+    #[test]
+    fn handoff_envelope_serde_with_only_summary() {
+        // Minimal envelope as the /handoff slash command would emit it —
+        // summary only, other vec/string fields default-empty.  Defaults
+        // must come through round-trip cleanly.
+        let env = HandoffEnvelope {
+            from_agent: "You".to_string(),
+            summary: "test".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let back: HandoffEnvelope = serde_json::from_str(&json).unwrap();
+        assert!(back.decisions.is_empty());
+        assert!(back.open_questions.is_empty());
+        assert_eq!(back.continuation_hint, "");
+    }
+
+    #[test]
+    fn message_type_handoff_serializes_snake_case() {
+        // serde rename_all = "snake_case" → Handoff becomes "handoff".
+        // Memory writer keys off this lowercase string when storing.
+        let json = serde_json::to_string(&MessageType::Handoff).unwrap();
+        assert_eq!(json, "\"handoff\"");
+    }
+
+    #[test]
+    fn payload_handoff_round_trip_in_message() {
+        let env = HandoffEnvelope {
+            from_agent: "You".to_string(),
+            summary: "ship it".to_string(),
+            ..Default::default()
+        };
+        let from = AgentAddress::new("You", "tui");
+        let msg = AgentMessage::new(from, None, MessageType::Handoff, Payload::Handoff(env));
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: AgentMessage = serde_json::from_str(&json).unwrap();
+        if let Payload::Handoff(e) = back.payload {
+            assert_eq!(e.summary, "ship it");
+        } else {
+            panic!("expected Payload::Handoff after round-trip");
+        }
+    }
+
+    #[test]
+    fn old_message_without_model_override_still_parses() {
+        // Backward compat: a message JSON missing the model_override field
+        // (e.g. from a cached row written before b671d40) must still parse.
+        let json = r#"{
+            "message_id": "00000000-0000-0000-0000-000000000001",
+            "timestamp": "2026-05-22T00:00:00Z",
+            "correlation_id": null,
+            "from": {"agent_id": "00000000-0000-0000-0000-000000000002", "agent_name": "x", "adapter_type": "y"},
+            "to": null,
+            "message_type": "task_request",
+            "payload": {"text": "hi"},
+            "session_id": "",
+            "memory_context": [],
+            "priority": "normal",
+            "ttl": null
+        }"#;
+        let msg: AgentMessage = serde_json::from_str(json).unwrap();
+        assert!(msg.model_override.is_none());
     }
 }

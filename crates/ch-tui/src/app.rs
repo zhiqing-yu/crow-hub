@@ -2,7 +2,9 @@ use anyhow::Result;
 use ch_agent::{AgentActivity, AgentInfo, AgentRuntime};
 use ch_core::MessageBus;
 use ch_memory::MemoryStore;
-use ch_protocol::{AgentAddress, AgentId, AgentMessage, MessageType, Payload, MemoryEntry};
+use ch_protocol::{
+    AgentAddress, AgentId, AgentMessage, HandoffEnvelope, MemoryEntry, MessageType, Payload,
+};
 use crate::theme::Theme;
 use crossterm::{
     event::{
@@ -181,10 +183,59 @@ impl App {
                 self.messages.push("── Showing all agents (/all off — switch agent to scope) ──".into());
                 self.chat_scroll_offset = 0;
             }
+            "/handoff" => {
+                // Manual handoff envelope emission.  Useful for testing the
+                // Handoff data path end-to-end before agents auto-emit them
+                // from prompt output.  Broadcasts as MessageType::Handoff +
+                // Payload::Handoff on the "general" channel — every subscribed
+                // agent (and the memory writer) receives it.
+                if arg.is_empty() {
+                    self.messages
+                        .push("/handoff — usage: /handoff <summary>".into());
+                } else {
+                    let envelope = HandoffEnvelope {
+                        from_agent: "You".to_string(),
+                        summary: arg.to_string(),
+                        ..Default::default()
+                    };
+                    // Render in the chat panel so the user sees feedback.
+                    // The `⇄` glyph distinguishes handoffs from regular text;
+                    // the chat scope filter passes any line starting with `⇄`
+                    // unconditionally so handoffs stay visible across scopes.
+                    self.messages.push(format!("⇄ You → {}", arg));
+
+                    // Fire-and-forget bus send.  Same pattern as
+                    // send_prompt_to_agent.  Broadcast (to: None) so the
+                    // memory writer and any subscribed agent receives it.
+                    let bus = self.bus.clone();
+                    let user_id = self.user_agent_id;
+                    let from_addr = AgentAddress {
+                        agent_id: user_id,
+                        agent_name: "You".to_string(),
+                        adapter_type: "tui".to_string(),
+                    };
+                    let bus_msg = AgentMessage::new(
+                        from_addr,
+                        None,
+                        MessageType::Handoff,
+                        Payload::Handoff(envelope),
+                    );
+                    tokio::spawn(async move {
+                        if let Err(e) = bus
+                            .send_to_channel("general", &user_id, bus_msg)
+                            .await
+                        {
+                            tracing::error!("Failed to send handoff to bus: {}", e);
+                        }
+                    });
+                }
+            }
             "/help" => {
                 self.messages.push("┈┈┈ Slash Commands ┈┈┈".into());
                 self.messages.push("/clear              Clear chat history".into());
                 self.messages.push("/model <name>       Override model for next messages (blank to show)".into());
+                self.messages.push("/all                Unscope chat (show all agents)".into());
+                self.messages.push("/handoff <summary>  Emit a Handoff envelope on the bus".into());
                 self.messages.push("/help               Show this help".into());
                 self.messages.push("┈┈┈ Keyboard Shortcuts ┈┈┈".into());
                 self.messages.push("Tab         Switch panel (Agents→Chat→Memory→Input)".into());
@@ -749,8 +800,16 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
         let mut all_lines: Vec<String> = Vec::new();
         for m in &app.messages {
+            // Scope filter: in single-agent scope, show only that agent's
+            // messages + the user's.  Always pass-through handoff lines
+            // (prefix `⇄`) because they're cross-agent coordination and
+            // belong in every view.
             let show = match scope_agent {
-                Some(name) => m.starts_with("You:") || m.starts_with(&format!("{}:", name)),
+                Some(name) => {
+                    m.starts_with("You:")
+                        || m.starts_with("⇄")
+                        || m.starts_with(&format!("{}:", name))
+                }
                 None => true,
             };
             if show {

@@ -235,6 +235,20 @@ impl AgentRuntime {
             use futures::stream::StreamExt;
             let mut rx = agent_rx;
             while let Some(msg) = rx.recv().await {
+                // Handoff observation: log when a Handoff envelope crosses
+                // this agent's queue, regardless of addressing.  This is the
+                // first step toward agents reacting to handoffs; today it's
+                // just visibility in crow-hub.log so the user can trace
+                // multi-agent coordination.
+                if let (MessageType::Handoff, Payload::Handoff(env)) =
+                    (&msg.message_type, &msg.payload)
+                {
+                    info!(
+                        "[{}] received handoff from {}: {}",
+                        agent_name, env.from_agent, env.summary
+                    );
+                }
+
                 // Only process messages addressed to this agent
                 let addressed_to_me = match &msg.to {
                     Some(addr) => addr.agent_id == agent_id,

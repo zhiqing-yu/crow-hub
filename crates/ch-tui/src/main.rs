@@ -615,10 +615,12 @@ async fn run_memory_tail(channel: String, count: usize) -> anyhow::Result<()> {
 
     for entry in entries {
         // Pick a glyph by message direction.  TaskRequest = user/agent
-        // asking, TaskResponse = agent answering.
+        // asking, TaskResponse = agent answering, Handoff = cross-agent
+        // structured envelope.
         let glyph = match entry.memory_type.as_str() {
             "taskrequest" => "→",
             "taskresponse" => "←",
+            "handoff" => "⇄",
             other => other,
         };
         // Prefer the readable agent name from metadata when present (writer
