@@ -1,3 +1,4 @@
+use crate::theme::Theme;
 use anyhow::Result;
 use ch_agent::{AgentActivity, AgentInfo, AgentRuntime};
 use ch_core::MessageBus;
@@ -5,7 +6,6 @@ use ch_memory::MemoryStore;
 use ch_protocol::{
     AgentAddress, AgentId, AgentMessage, HandoffEnvelope, MemoryEntry, MessageType, Payload,
 };
-use crate::theme::Theme;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -171,16 +171,25 @@ impl App {
             }
             "/model" => {
                 if arg.is_empty() {
-                    let current = if self.default_model.is_empty() { "none" } else { &self.default_model };
-                    self.messages.push(format!("/model — current: {}  (usage: /model <name>)", current));
+                    let current = if self.default_model.is_empty() {
+                        "none"
+                    } else {
+                        &self.default_model
+                    };
+                    self.messages.push(format!(
+                        "/model — current: {}  (usage: /model <name>)",
+                        current
+                    ));
                 } else {
                     self.default_model = arg.to_string();
-                    self.messages.push(format!("/model — default model set to: {}", arg));
+                    self.messages
+                        .push(format!("/model — default model set to: {}", arg));
                 }
             }
             "/all" => {
                 self.chat_scope_all = true;
-                self.messages.push("── Showing all agents (/all off — switch agent to scope) ──".into());
+                self.messages
+                    .push("── Showing all agents (/all off — switch agent to scope) ──".into());
                 self.chat_scroll_offset = 0;
             }
             "/handoff" => {
@@ -221,10 +230,7 @@ impl App {
                         Payload::Handoff(envelope),
                     );
                     tokio::spawn(async move {
-                        if let Err(e) = bus
-                            .send_to_channel("general", &user_id, bus_msg)
-                            .await
-                        {
+                        if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
                             tracing::error!("Failed to send handoff to bus: {}", e);
                         }
                     });
@@ -232,20 +238,29 @@ impl App {
             }
             "/help" => {
                 self.messages.push("┈┈┈ Slash Commands ┈┈┈".into());
-                self.messages.push("/clear              Clear chat history".into());
-                self.messages.push("/model <name>       Override model for next messages (blank to show)".into());
-                self.messages.push("/all                Unscope chat (show all agents)".into());
-                self.messages.push("/handoff <summary>  Emit a Handoff envelope on the bus".into());
-                self.messages.push("/help               Show this help".into());
+                self.messages
+                    .push("/clear              Clear chat history".into());
+                self.messages.push(
+                    "/model <name>       Override model for next messages (blank to show)".into(),
+                );
+                self.messages
+                    .push("/all                Unscope chat (show all agents)".into());
+                self.messages
+                    .push("/handoff <summary>  Emit a Handoff envelope on the bus".into());
+                self.messages
+                    .push("/help               Show this help".into());
                 self.messages.push("┈┈┈ Keyboard Shortcuts ┈┈┈".into());
-                self.messages.push("Tab         Switch panel (Agents→Chat→Memory→Input)".into());
+                self.messages
+                    .push("Tab         Switch panel (Agents→Chat→Memory→Input)".into());
                 self.messages.push("↑↓          Navigate / scroll".into());
-                self.messages.push("Space       Multi-select agent (Agents panel)".into());
+                self.messages
+                    .push("Space       Multi-select agent (Agents panel)".into());
                 self.messages.push("Enter       Send message".into());
                 self.messages.push("Ctrl+C      Quit".into());
             }
             _ => {
-                self.messages.push(format!("Unknown command: {}  (try /help)", verb));
+                self.messages
+                    .push(format!("Unknown command: {}  (try /help)", verb));
             }
         }
         self.input.clear();
@@ -256,18 +271,34 @@ impl App {
     pub fn on_tick(&mut self) {
         self.tick_count = self.tick_count.wrapping_add(1);
         while let Ok((agent, response)) = self.response_rx.try_recv() {
-            // Streaming intelligence: append to last message if it's from the same agent
-            if let Some(last_msg) = self.messages.last_mut() {
-                let prefix = format!("{}: ", agent);
-                if last_msg.starts_with(&prefix) {
-                    last_msg.push_str(&response);
-                    continue;
-                }
-            }
-            // Otherwise push a new message
-            self.messages.push(format!("{}: {}", agent, response));
+            append_chat_message(&mut self.messages, &agent, &response);
         }
     }
+}
+
+/// Append one `(agent, response)` tuple from the response bridge into the
+/// chat message log.  Extracted into a free function so it can be unit-tested
+/// without constructing a full `App` (which requires real `AgentRuntime` and
+/// `MessageBus` instances).  Two special cases:
+///
+/// * `agent == "__handoff__"` — the response is a pre-formatted handoff line
+///   (e.g. `"⇄ claude → done"`); push as-is so the leading `⇄` glyph survives
+///   and the chat scope filter passes it.
+/// * `agent` matches the prefix of the last message — streaming continuation;
+///   append to the existing line rather than starting a new one.
+pub(crate) fn append_chat_message(messages: &mut Vec<String>, agent: &str, response: &str) {
+    if agent == "__handoff__" {
+        messages.push(response.to_string());
+        return;
+    }
+    if let Some(last_msg) = messages.last_mut() {
+        let prefix = format!("{}: ", agent);
+        if last_msg.starts_with(&prefix) {
+            last_msg.push_str(response);
+            return;
+        }
+    }
+    messages.push(format!("{}: {}", agent, response));
 }
 
 pub fn run_tui_app(
@@ -428,7 +459,8 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1);
                             }
                             FocusedPanel::Memory => {
-                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_sub(1);
+                                app.memory_scroll_offset =
+                                    app.memory_scroll_offset.saturating_sub(1);
                             }
                         },
                         KeyCode::Down => match app.focused_panel {
@@ -445,7 +477,8 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.input_scroll_offset = app.input_scroll_offset.saturating_add(1);
                             }
                             FocusedPanel::Memory => {
-                                app.memory_scroll_offset = app.memory_scroll_offset.saturating_add(1);
+                                app.memory_scroll_offset =
+                                    app.memory_scroll_offset.saturating_add(1);
                             }
                         },
                         KeyCode::Char('r') if app.focused_panel == FocusedPanel::Memory => {
@@ -492,7 +525,11 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 // Fan out: one tokio task per target, all
                                 // independent.  The bus dispatches each
                                 // message to its addressed agent in parallel.
-                                let mo = if app.default_model.is_empty() { None } else { Some(app.default_model.clone()) };
+                                let mo = if app.default_model.is_empty() {
+                                    None
+                                } else {
+                                    Some(app.default_model.clone())
+                                };
                                 for agent_name in targets {
                                     send_prompt_to_agent(
                                         &runtime,
@@ -572,7 +609,14 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     // Split screen: tab bar + main area + footer
     let tab_main = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)].as_ref())
+        .constraints(
+            [
+                Constraint::Length(1),
+                Constraint::Min(3),
+                Constraint::Length(1),
+            ]
+            .as_ref(),
+        )
         .split(f.size());
     let tab_area = tab_main[0];
     let main_area = tab_main[1];
@@ -591,21 +635,31 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     // ── Tab Bar ─────────────────────────────────────────────────
     let tabs = [
-        ("Agents",  Tab::Agents),
-        ("Chat",    Tab::Chat),
+        ("Agents", Tab::Agents),
+        ("Chat", Tab::Chat),
         ("Monitor", Tab::Monitor),
-        ("Memory",  Tab::Memory),
+        ("Memory", Tab::Memory),
     ];
-    let tab_spans: Vec<Span> = tabs.iter().map(|(label, tab)| {
-        if app.active_tab == *tab {
-            Span::styled(format!(" {} ", label),
-                Style::default().fg(Color::Black).bg(app.theme.border_focused).add_modifier(Modifier::BOLD))
-        } else {
-            Span::styled(format!(" {} ", label),
-                Style::default().fg(Color::Gray))
-        }
-    }).collect();
-    f.render_widget(Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(Color::Black)), tab_area);
+    let tab_spans: Vec<Span> = tabs
+        .iter()
+        .map(|(label, tab)| {
+            if app.active_tab == *tab {
+                Span::styled(
+                    format!(" {} ", label),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(app.theme.border_focused)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled(format!(" {} ", label), Style::default().fg(Color::Gray))
+            }
+        })
+        .collect();
+    f.render_widget(
+        Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(Color::Black)),
+        tab_area,
+    );
 
     // 1a. Agent status summary — quick overview at top of panel
     let (mut thinking, mut idle, mut errored, mut unknown) = (0u32, 0u32, 0u32, 0u32);
@@ -641,7 +695,8 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .enumerate()
         .map(|(i, a)| {
             let activity = app.runtime.activity_of(&a.name);
-            let (glyph, glyph_color, suffix) = render_activity(&activity, app.tick_count, &app.theme);
+            let (glyph, glyph_color, suffix) =
+                render_activity(&activity, app.tick_count, &app.theme);
 
             let selected = i == app.selected_agent;
             let multi = app.multi_selected.contains(&i);
@@ -650,9 +705,15 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             // multi-selected, so the single-agent default view stays compact.
             let multi_box: Option<Span> = if any_multi {
                 if multi {
-                    Some(Span::styled("[✓] ", Style::default().fg(app.theme.agent_multi)))
+                    Some(Span::styled(
+                        "[✓] ",
+                        Style::default().fg(app.theme.agent_multi),
+                    ))
                 } else {
-                    Some(Span::styled("[ ] ", Style::default().fg(app.theme.agent_multi_dim)))
+                    Some(Span::styled(
+                        "[ ] ",
+                        Style::default().fg(app.theme.agent_multi_dim),
+                    ))
                 }
             } else {
                 None
@@ -662,7 +723,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             if multi {
                 name_style = name_style.fg(app.theme.agent_multi);
             } else if selected {
-                name_style = name_style.add_modifier(Modifier::BOLD).fg(app.theme.agent_cursor);
+                name_style = name_style
+                    .add_modifier(Modifier::BOLD)
+                    .fg(app.theme.agent_cursor);
             }
 
             let mut spans = Vec::new();
@@ -718,7 +781,11 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .split(inner);
 
     let summary_par = Paragraph::new(summary)
-        .style(Style::default().fg(app.theme.summary).add_modifier(Modifier::ITALIC))
+        .style(
+            Style::default()
+                .fg(app.theme.summary)
+                .add_modifier(Modifier::ITALIC),
+        )
         .alignment(ratatui::layout::Alignment::Center);
     f.render_widget(summary_par, agent_chunks[0]);
 
@@ -743,9 +810,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     if app.active_tab == Tab::Memory {
         // ── Memory Panel ────────────────────────────────────────
-        let mut mem_block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Memory  (last {}, ↑↓:scroll)", app.memory_rows.len()));
+        let mut mem_block = Block::default().borders(Borders::ALL).title(format!(
+            "Memory  (last {}, ↑↓:scroll)",
+            app.memory_rows.len()
+        ));
         if app.active_tab == Tab::Memory {
             mem_block = mem_block.border_style(Style::default().fg(app.theme.border_focused));
         }
@@ -769,17 +837,15 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| {
                         let id = entry.agent_id.to_string();
-                        if id.len() >= 8 { id[..8].to_string() } else { id }
+                        if id.len() >= 8 {
+                            id[..8].to_string()
+                        } else {
+                            id
+                        }
                     });
                 let ts = entry.created_at.format("%m-%d %H:%M");
                 let content = entry.content.replace('\n', " ").replace('\r', " ");
-                let line = format!(
-                    "{} {} {:>8}  {}",
-                    glyph,
-                    ts,
-                    from,
-                    content
-                );
+                let line = format!("{} {} {:>8}  {}", glyph, ts, from, content);
                 ListItem::new(Line::from(Span::raw(line)))
             })
             .collect();
@@ -820,8 +886,8 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
         let max_scroll = all_lines.len().saturating_sub(height);
         let current_scroll = max_scroll.saturating_sub(app.chat_scroll_offset);
-        let visible_lines =
-            &all_lines[current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
+        let visible_lines = &all_lines
+            [current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
 
         let messages_items: Vec<ListItem> = visible_lines
             .iter()
@@ -850,7 +916,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     // Footer: keyboard shortcut bar (context-sensitive)
     let shortcuts = match app.focused_panel {
-        FocusedPanel::Agents => "↑↓:navigate  Space:multi-select  Backspace:clear  Enter:send  Tab:next",
+        FocusedPanel::Agents => {
+            "↑↓:navigate  Space:multi-select  Backspace:clear  Enter:send  Tab:next"
+        }
         FocusedPanel::Chat => "↑↓:scroll  Tab:next  Ctrl+C:quit",
         FocusedPanel::Input => "Enter:send  Tab:next  Ctrl+C:quit",
         FocusedPanel::Memory => "↑↓:scroll  r:refresh  Tab:next  Ctrl+C:quit",
@@ -878,7 +946,11 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 /// Braille spinner frames for animated thinking indicator
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-fn render_activity(activity: &AgentActivity, tick: u64, theme: &Theme) -> (&'static str, Color, String) {
+fn render_activity(
+    activity: &AgentActivity,
+    tick: u64,
+    theme: &Theme,
+) -> (&'static str, Color, String) {
     match activity {
         AgentActivity::Unknown => ("○", theme.status_unknown, String::new()),
         AgentActivity::Idle {
@@ -893,7 +965,12 @@ fn render_activity(activity: &AgentActivity, tick: u64, theme: &Theme) -> (&'sta
             };
             if *cumulative_tokens_in > 0 || *cumulative_tokens_out > 0 {
                 use std::fmt::Write;
-                let _ = write!(suffix, "·{}/{}", format_tokens(*cumulative_tokens_in), format_tokens(*cumulative_tokens_out));
+                let _ = write!(
+                    suffix,
+                    "·{}/{}",
+                    format_tokens(*cumulative_tokens_in),
+                    format_tokens(*cumulative_tokens_out)
+                );
             }
             if *cumulative_cost_usd > 0.0 {
                 use std::fmt::Write;
@@ -1028,43 +1105,56 @@ mod tests {
 
     #[test]
     fn render_activity_unknown_has_empty_suffix() {
-        let (glyph, _, suffix) = render_activity(&AgentActivity::Unknown, 0, &crate::theme::from_env());
+        let (glyph, _, suffix) =
+            render_activity(&AgentActivity::Unknown, 0, &crate::theme::from_env());
         assert_eq!(glyph, "○");
         assert_eq!(suffix, "");
     }
 
     #[test]
     fn render_activity_idle_with_latency() {
-        let (glyph, _, suffix) = render_activity(&AgentActivity::Idle {
-            last_latency_ms: Some(780),
-            cumulative_tokens_in: 0,
-            cumulative_tokens_out: 0,
-            cumulative_cost_usd: 0.0,
-        }, 0, &crate::theme::from_env());
+        let (glyph, _, suffix) = render_activity(
+            &AgentActivity::Idle {
+                last_latency_ms: Some(780),
+                cumulative_tokens_in: 0,
+                cumulative_tokens_out: 0,
+                cumulative_cost_usd: 0.0,
+            },
+            0,
+            &crate::theme::from_env(),
+        );
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "780ms");
     }
 
     #[test]
     fn render_activity_idle_with_tokens() {
-        let (glyph, _, suffix) = render_activity(&AgentActivity::Idle {
-            last_latency_ms: Some(18_600),
-            cumulative_tokens_in: 22279,
-            cumulative_tokens_out: 284,
-            cumulative_cost_usd: 0.0,
-        }, 0, &crate::theme::from_env());
+        let (glyph, _, suffix) = render_activity(
+            &AgentActivity::Idle {
+                last_latency_ms: Some(18_600),
+                cumulative_tokens_in: 22279,
+                cumulative_tokens_out: 284,
+                cumulative_cost_usd: 0.0,
+            },
+            0,
+            &crate::theme::from_env(),
+        );
         assert_eq!(glyph, "●");
         assert_eq!(suffix, "18.6s·22k/284");
     }
 
     #[test]
     fn render_activity_idle_no_tokens_when_zero() {
-        let (_, _, suffix) = render_activity(&AgentActivity::Idle {
-            last_latency_ms: Some(100),
-            cumulative_tokens_in: 0,
-            cumulative_tokens_out: 0,
-            cumulative_cost_usd: 0.0,
-        }, 0, &crate::theme::from_env());
+        let (_, _, suffix) = render_activity(
+            &AgentActivity::Idle {
+                last_latency_ms: Some(100),
+                cumulative_tokens_in: 0,
+                cumulative_tokens_out: 0,
+                cumulative_cost_usd: 0.0,
+            },
+            0,
+            &crate::theme::from_env(),
+        );
         assert!(!suffix.contains("·"), "no token suffix when both zero");
     }
 
@@ -1079,9 +1169,13 @@ mod tests {
 
     #[test]
     fn render_activity_errored_shows_err_suffix() {
-        let (glyph, _, suffix) = render_activity(&AgentActivity::Errored {
-            last_error: "boom".into(),
-        }, 0, &crate::theme::from_env());
+        let (glyph, _, suffix) = render_activity(
+            &AgentActivity::Errored {
+                last_error: "boom".into(),
+            },
+            0,
+            &crate::theme::from_env(),
+        );
         assert_eq!(glyph, "✗");
         assert_eq!(suffix, "err");
     }
@@ -1168,5 +1262,47 @@ mod tests {
         set.insert(5); // stale
         let targets = resolve_send_targets(&agents, &set, 0);
         assert_eq!(targets, vec!["a".to_string()]);
+    }
+
+    // ─── append_chat_message: streaming + handoff bridge ────────────────────
+
+    #[test]
+    fn append_chat_message_handoff_pushes_unprefixed() {
+        // Synthetic agent "__handoff__" carries pre-formatted lines from
+        // the bus→TUI bridge.  on_tick must push them as-is so the leading
+        // `⇄` glyph survives (the chat scope filter passes `⇄`-prefixed
+        // lines through unconditionally).
+        let mut messages: Vec<String> = Vec::new();
+        append_chat_message(&mut messages, "__handoff__", "⇄ claude → done");
+        assert_eq!(messages.len(), 1);
+        assert!(
+            messages[0].starts_with("⇄"),
+            "expected handoff line to start with `⇄`, got: {:?}",
+            messages[0]
+        );
+        assert!(
+            !messages[0].contains("__handoff__"),
+            "handoff line must NOT contain the synthetic agent name, got: {:?}",
+            messages[0]
+        );
+    }
+
+    #[test]
+    fn append_chat_message_text_streams_into_last_when_same_agent() {
+        // Regression: streaming chunks from the same agent should merge into
+        // a single chat line, not produce multiple "claude: ..." entries.
+        let mut messages: Vec<String> = vec!["claude: hel".to_string()];
+        append_chat_message(&mut messages, "claude", "lo world");
+        assert_eq!(messages, vec!["claude: hello world".to_string()]);
+    }
+
+    #[test]
+    fn append_chat_message_text_starts_new_line_for_different_agent() {
+        let mut messages: Vec<String> = vec!["claude: done".to_string()];
+        append_chat_message(&mut messages, "gemini", "hi");
+        assert_eq!(
+            messages,
+            vec!["claude: done".to_string(), "gemini: hi".to_string()]
+        );
     }
 }

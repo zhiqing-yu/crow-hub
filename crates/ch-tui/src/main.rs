@@ -306,7 +306,12 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
 
     let plugins_dir = ch_core::get_plugins_dir();
     let pricing = Arc::new(ch_core::pricing::load_user_pricing());
-    let agent_runtime = Arc::new(AgentRuntime::new(router, hub.bus.clone(), plugins_dir, pricing));
+    let agent_runtime = Arc::new(AgentRuntime::new(
+        router,
+        hub.bus.clone(),
+        plugins_dir,
+        pricing,
+    ));
     agent_runtime.load_all().await?;
 
     // Subscribe a "user" identity to the bus for the TUI
@@ -316,16 +321,28 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
     hub.bus
         .join_channel("general", user_agent_id, ch_core::ChannelVisibility::Full)?;
 
-    // Pre-create the TUI response channel and bridge bus messages into it
+    // Pre-create the TUI response channel and bridge bus messages into it.
+    // Text payloads stream into the chat panel attributed to their sender;
+    // Handoff payloads are pre-formatted with the `⇄` glyph and tagged with
+    // the synthetic agent name "__handoff__" so `app::on_tick` can push them
+    // as-is (no `{agent}: ` prefix, so the existing chat scope filter passes
+    // them through unconditionally).
     let (tx, response_rx) = tokio::sync::mpsc::channel::<(String, String)>(100);
     let tx_bridge = tx.clone();
     tokio::spawn(async move {
         let mut rx = bus_rx;
         while let Some(msg) = rx.recv().await {
-            if let Payload::Text(ref text) = msg.payload {
-                let _ = tx_bridge
-                    .send((msg.from.agent_name.clone(), text.clone()))
-                    .await;
+            match &msg.payload {
+                Payload::Text(text) => {
+                    let _ = tx_bridge
+                        .send((msg.from.agent_name.clone(), text.clone()))
+                        .await;
+                }
+                Payload::Handoff(env) => {
+                    let line = format!("⇄ {} → {}", env.from_agent, env.summary);
+                    let _ = tx_bridge.send(("__handoff__".to_string(), line)).await;
+                }
+                _ => {}
             }
         }
     });
@@ -634,7 +651,11 @@ async fn run_memory_tail(channel: String, count: usize) -> anyhow::Result<()> {
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
                 let id = entry.agent_id.to_string();
-                if id.len() >= 8 { id[..8].to_string() } else { id }
+                if id.len() >= 8 {
+                    id[..8].to_string()
+                } else {
+                    id
+                }
             });
 
         let ts = entry.created_at.format("%m-%d %H:%M:%S");
