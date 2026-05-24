@@ -298,8 +298,14 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
         .to_string();
     let memory_store =
         Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
-    let _writer_handle =
-        ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
+    // The writer needs the store via two traits — MemoryStore for chat/handoff,
+    // EvidenceStore for evidence claims.  SqliteMemoryStore implements both,
+    // so the same Arc cloned twice works.
+    let _writer_handle = ch_memory::writer::spawn_memory_writer(
+        hub.bus.clone(),
+        memory_store.clone(),
+        memory_store.clone(),
+    );
 
     let registry = Arc::new(ModelRegistry::new());
     let router = Arc::new(ModelRouter::new(registry.clone()));
@@ -378,8 +384,14 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
         .to_string();
     let memory_store =
         Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
-    let _writer_handle =
-        ch_memory::writer::spawn_memory_writer(hub.bus.clone(), memory_store.clone());
+    // The writer needs the store via two traits — MemoryStore for chat/handoff,
+    // EvidenceStore for evidence claims.  SqliteMemoryStore implements both,
+    // so the same Arc cloned twice works.
+    let _writer_handle = ch_memory::writer::spawn_memory_writer(
+        hub.bus.clone(),
+        memory_store.clone(),
+        memory_store.clone(),
+    );
 
     // Wire up the new v2 architecture
     info!("Initializing v2 Hub Architecture...");

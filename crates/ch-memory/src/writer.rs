@@ -1,30 +1,100 @@
-use crate::MemoryStore;
+use crate::{EvidenceRow, EvidenceStatus, EvidenceStore, MemoryStore};
 use ch_core::bus::MessageBus;
 use ch_core::channel::ChannelVisibility;
 use ch_protocol::{AgentId, MemoryEntry, MessageType, Payload};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+/// Spawn the background task that persists bus traffic to the memory + evidence
+/// stores.  Subscribes to the "general" channel and dispatches by payload kind:
+///
+///   * `Payload::Text` + TaskRequest/TaskResponse → `messages` table (chat)
+///   * `Payload::Handoff` + Handoff               → `messages` table (JSON in content, memory_type=handoff)
+///   * `Payload::Evidence` + Evidence             → `evidence` table (write_evidence)
+///   * `Payload::EvidenceVerify` + EvidenceVerify → `evidence` table (verify/fail)
+///   * anything else (heartbeats, metrics, etc.)  → silently skipped
+///
+/// `memory_store` and `evidence_store` are usually the same concrete
+/// `SqliteMemoryStore` cloned into two trait objects — callers can pass
+/// `store.clone()` for both arguments.
 pub fn spawn_memory_writer(
     bus: Arc<MessageBus>,
-    store: Arc<dyn MemoryStore>,
+    memory_store: Arc<dyn MemoryStore>,
+    evidence_store: Arc<dyn EvidenceStore>,
 ) -> tokio::task::JoinHandle<()> {
     let writer_id = AgentId::new();
+    let store = memory_store;
     tokio::spawn(async move {
         let mut rx = bus.subscribe(writer_id).await;
         let _ = bus.join_channel("general", writer_id, ChannelVisibility::Full);
         info!("memory writer subscribed to general channel");
 
         while let Some(msg) = rx.recv().await {
-            // Decide what to persist for this message.  Two supported shapes:
-            //   * Text + TaskRequest/TaskResponse → user/agent chat
-            //   * Handoff(envelope) + Handoff     → JSON-serialised envelope
-            // Anything else (heartbeats, metrics, etc.) is silently skipped.
-            //
-            // No SQLite schema change is needed for handoffs — the envelope
-            // is stored as JSON in the existing `content` column with
-            // `memory_type = "handoff"` so `crow memory tail` can recognise
-            // and pretty-print them separately if it wants to.
+            // Dispatch evidence payloads BEFORE the message-table tuple match
+            // so they write to the evidence table and skip the rest of the loop.
+            match (&msg.payload, &msg.message_type) {
+                (Payload::Evidence(claim), MessageType::Evidence) => {
+                    let row = EvidenceRow {
+                        id: msg.message_id.to_string(),
+                        task_id: claim.task_id.clone(),
+                        correlation_id: msg.correlation_id.map(|c| c.to_string()),
+                        agent_id: msg.from.agent_id,
+                        agent_name: msg.from.agent_name.clone(),
+                        claim: claim.claim.clone(),
+                        status: EvidenceStatus::Pending,
+                        witness: claim.witness.clone(),
+                        metadata: serde_json::Value::Null,
+                        created_at: msg.timestamp,
+                        verified_at: None,
+                        verified_by: None,
+                    };
+                    let row_id = row.id.clone();
+                    match evidence_store.write_evidence(row).await {
+                        Ok(_) => debug!(
+                            "memory writer: persisted evidence (id={}, task={}, from={})",
+                            row_id, claim.task_id, msg.from.agent_name
+                        ),
+                        Err(e) => warn!(
+                            "memory writer: failed to persist evidence (id={}, from={}): {}",
+                            row_id, msg.from.agent_name, e
+                        ),
+                    }
+                    continue;
+                }
+                (Payload::EvidenceVerify(v), MessageType::EvidenceVerify) => {
+                    let by = &msg.from.agent_name;
+                    let result = if v.outcome {
+                        evidence_store
+                            .verify(&v.evidence_id, by, v.note.clone())
+                            .await
+                    } else {
+                        evidence_store
+                            .fail(
+                                &v.evidence_id,
+                                by,
+                                v.note.clone().unwrap_or_else(|| "(no reason)".to_string()),
+                            )
+                            .await
+                    };
+                    match result {
+                        Ok(_) => debug!(
+                            "memory writer: evidence {} (id={}, by={})",
+                            if v.outcome { "verified" } else { "failed" },
+                            v.evidence_id,
+                            by
+                        ),
+                        Err(e) => warn!(
+                            "memory writer: failed to update evidence (id={}, by={}): {}",
+                            v.evidence_id, by, e
+                        ),
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Fall through to the chat/handoff dispatch — writes to the
+            // `messages` table.
             let (content_str, memory_type_str): (String, String) =
                 match (&msg.payload, &msg.message_type) {
                     (Payload::Text(text), MessageType::TaskRequest)
