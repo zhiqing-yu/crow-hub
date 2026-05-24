@@ -27,6 +27,13 @@ use std::sync::Arc;
 use std::{io, time::Duration};
 use tokio::sync::mpsc;
 
+/// Every slash command the TUI implements.  The `help_lines()` output and
+/// the `handle_slash_command` match arms MUST stay in sync with this list —
+/// a regression test in `tests` asserts every entry here appears in
+/// `help_lines()`, so adding a new command without updating `/help` will
+/// fail CI rather than silently leaving users without docs.
+pub const SUPPORTED_COMMANDS: &[&str] = &["/clear", "/model", "/all", "/handoff", "/help"];
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum FocusedPanel {
     Agents,
@@ -237,26 +244,9 @@ impl App {
                 }
             }
             "/help" => {
-                self.messages.push("┈┈┈ Slash Commands ┈┈┈".into());
-                self.messages
-                    .push("/clear              Clear chat history".into());
-                self.messages.push(
-                    "/model <name>       Override model for next messages (blank to show)".into(),
-                );
-                self.messages
-                    .push("/all                Unscope chat (show all agents)".into());
-                self.messages
-                    .push("/handoff <summary>  Emit a Handoff envelope on the bus".into());
-                self.messages
-                    .push("/help               Show this help".into());
-                self.messages.push("┈┈┈ Keyboard Shortcuts ┈┈┈".into());
-                self.messages
-                    .push("Tab         Switch panel (Agents→Chat→Memory→Input)".into());
-                self.messages.push("↑↓          Navigate / scroll".into());
-                self.messages
-                    .push("Space       Multi-select agent (Agents panel)".into());
-                self.messages.push("Enter       Send message".into());
-                self.messages.push("Ctrl+C      Quit".into());
+                for line in help_lines() {
+                    self.messages.push(line);
+                }
             }
             _ => {
                 self.messages
@@ -299,6 +289,30 @@ pub(crate) fn append_chat_message(messages: &mut Vec<String>, agent: &str, respo
         }
     }
     messages.push(format!("{}: {}", agent, response));
+}
+
+/// Lines rendered by `/help`.  Extracted as a free function so a unit test
+/// can assert every entry in `SUPPORTED_COMMANDS` is documented without
+/// constructing a full `App` (which requires real `AgentRuntime` + bus).
+///
+/// Order: slash commands first, then keyboard shortcuts, separated by a
+/// header line each.  Order within slash commands matches `SUPPORTED_COMMANDS`
+/// so the regression test catches accidental reorderings too.
+pub(crate) fn help_lines() -> Vec<String> {
+    vec![
+        "┈┈┈ Slash Commands ┈┈┈".to_string(),
+        "/clear              Clear chat history".to_string(),
+        "/model <name>       Override model for next messages (blank to show)".to_string(),
+        "/all                Unscope chat (show all agents)".to_string(),
+        "/handoff <summary>  Emit a Handoff envelope on the bus".to_string(),
+        "/help               Show this help".to_string(),
+        "┈┈┈ Keyboard Shortcuts ┈┈┈".to_string(),
+        "Tab         Switch panel (Agents→Chat→Memory→Input)".to_string(),
+        "↑↓          Navigate / scroll".to_string(),
+        "Space       Multi-select agent (Agents panel)".to_string(),
+        "Enter       Send message".to_string(),
+        "Ctrl+C      Quit".to_string(),
+    ]
 }
 
 pub fn run_tui_app(
@@ -1303,6 +1317,40 @@ mod tests {
         assert_eq!(
             messages,
             vec!["claude: done".to_string(), "gemini: hi".to_string()]
+        );
+    }
+
+    // ─── help_lines: SUPPORTED_COMMANDS regression ─────────────────────────
+
+    #[test]
+    fn help_lines_documents_every_supported_command() {
+        // Every slash command in `SUPPORTED_COMMANDS` MUST appear in /help
+        // output.  If you add a new command (match arm in
+        // handle_slash_command) without also adding it to SUPPORTED_COMMANDS
+        // *and* help_lines(), this test fails — cheap insurance against
+        // documentation drift.
+        let lines = help_lines();
+        let blob = lines.join("\n");
+        for cmd in SUPPORTED_COMMANDS {
+            assert!(
+                blob.contains(cmd),
+                "/help output missing documentation for {} — update help_lines() \
+                 or remove from SUPPORTED_COMMANDS.  Current /help output:\n{}",
+                cmd,
+                blob
+            );
+        }
+    }
+
+    #[test]
+    fn help_lines_starts_with_slash_commands_header() {
+        // Sanity check on the structure — first line should be the slash
+        // commands header so users scrolling /help see the commands first.
+        let lines = help_lines();
+        assert!(
+            !lines.is_empty() && lines[0].contains("Slash Commands"),
+            "expected first line to be the slash commands header, got: {:?}",
+            lines.first()
         );
     }
 }
