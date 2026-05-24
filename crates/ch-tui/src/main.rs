@@ -322,6 +322,20 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
         memory_store.clone(),
     );
 
+    // Spawn the evidence verifier (keyword-rule for now, poll every 10s)
+    let verifier_interval = std::env::var("CROW_VERIFIER_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    if std::env::var("CROW_VERIFIER_OFF").unwrap_or_default() != "1" {
+        let _verifier_handle = ch_memory::verifier::spawn_verifier(
+            hub.bus.clone(),
+            memory_store.clone(),
+            vec![Box::new(ch_memory::verifier::KeywordRule)],
+            std::time::Duration::from_secs(verifier_interval),
+        );
+    }
+
     let registry = Arc::new(ModelRegistry::new());
     let router = Arc::new(ModelRouter::new(registry.clone()));
 
@@ -407,6 +421,17 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
         memory_store.clone(),
         memory_store.clone(),
     );
+
+    // Spawn evidence verifier (same as TUI path)
+    let verifier_interval = std::env::var("CROW_VERIFIER_INTERVAL_SECS")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(10);
+    if std::env::var("CROW_VERIFIER_OFF").unwrap_or_default() != "1" {
+        let _ = ch_memory::verifier::spawn_verifier(
+            hub.bus.clone(), memory_store.clone(),
+            vec![Box::new(ch_memory::verifier::KeywordRule)],
+            std::time::Duration::from_secs(verifier_interval),
+        );
+    }
 
     // Wire up the new v2 architecture
     info!("Initializing v2 Hub Architecture...");

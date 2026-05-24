@@ -12,6 +12,7 @@ use thiserror::Error;
 pub mod backends;
 pub mod embedder;
 pub mod writer;
+pub mod verifier;
 
 /// Memory error types
 #[derive(Error, Debug, Clone)]
