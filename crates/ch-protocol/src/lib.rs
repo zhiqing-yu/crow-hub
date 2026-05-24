@@ -78,6 +78,13 @@ pub enum MessageType {
     /// questions + continuation hint).  Inspired by Maestro's lifecycle
     /// envelopes — see `docs/journals/2026-05-19_brainstorming_maestro_lessons.md`.
     Handoff,
+    /// Agent claim that a task has been completed — written to the
+    /// `evidence` table with `status = pending` until a verifier flips it.
+    /// Maestro Task 2.
+    Evidence,
+    /// Verifier flips an existing evidence row to `verified` or `failed`.
+    /// Maestro Task 2.
+    EvidenceVerify,
     /// Custom message type
     Custom(String),
 }
@@ -213,6 +220,12 @@ pub enum Payload {
     Memory(MemoryEntry),
     /// Structured task handoff between agents
     Handoff(HandoffEnvelope),
+    /// Agent's auditable claim that a task has been completed.  Maestro
+    /// Task 2.  Persisted by the memory writer to the `evidence` table.
+    Evidence(EvidenceClaim),
+    /// Verifier flips a previously-emitted evidence row to verified or
+    /// failed.  Maestro Task 2.
+    EvidenceVerify(EvidenceVerifyMsg),
     /// Empty payload
     Empty,
 }
@@ -250,6 +263,42 @@ pub struct HandoffEnvelope {
     /// Hint for where the next agent should pick up (e.g. "see PR #42", "step 3")
     #[serde(default)]
     pub continuation_hint: String,
+}
+
+/// Bus message payload for an agent submitting an evidence claim — "I did
+/// X for task Y, witness is Z."  The memory writer persists this to the
+/// `evidence` table with `status = 'pending'`.  Maestro Task 2.
+///
+/// Symmetric with `HandoffEnvelope`: additive variant, snake_case serde,
+/// backward-compat preserved (no existing field changes).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EvidenceClaim {
+    /// Logical task this claim belongs to.  Multiple claims can share a
+    /// task_id when a single task produces several pieces of evidence.
+    pub task_id: String,
+    /// The claim itself, free-form (e.g. "built auth module", "deployed
+    /// to staging", "verified migration is safe").
+    pub claim: String,
+    /// Optional pointer to supporting material — URL, file path, commit
+    /// hash, etc.  Verifier agents can chase this to validate the claim.
+    #[serde(default)]
+    pub witness: Option<String>,
+}
+
+/// Bus message payload for a verifier flipping an existing evidence row.
+/// `outcome = true` → verified, `false` → failed (note carries the reason
+/// when failing).  Maestro Task 2.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EvidenceVerifyMsg {
+    /// ID of the evidence row to update (matches `EvidenceClaim` row id).
+    pub evidence_id: String,
+    /// `true` → verify, `false` → fail.
+    pub outcome: bool,
+    /// Optional note — required-ish for fail outcomes (stored as
+    /// `failure_reason` in the row's metadata JSON), informational for
+    /// verify outcomes.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Task specification
@@ -508,5 +557,80 @@ mod tests {
         }"#;
         let msg: AgentMessage = serde_json::from_str(json).unwrap();
         assert!(msg.model_override.is_none());
+    }
+
+    // ── Evidence (Maestro Task 2) ─────────────────────────────────────────
+
+    #[test]
+    fn message_type_evidence_variants_serialize_snake_case() {
+        // Memory writer keys off these lowercase strings to dispatch.
+        assert_eq!(
+            serde_json::to_string(&MessageType::Evidence).unwrap(),
+            "\"evidence\""
+        );
+        assert_eq!(
+            serde_json::to_string(&MessageType::EvidenceVerify).unwrap(),
+            "\"evidence_verify\""
+        );
+    }
+
+    #[test]
+    fn payload_evidence_round_trip_in_message() {
+        let claim = EvidenceClaim {
+            task_id: "task-42".to_string(),
+            claim: "built auth module".to_string(),
+            witness: Some("PR #42".to_string()),
+        };
+        let from = AgentAddress::new("claude", "tui");
+        let msg = AgentMessage::new(from, None, MessageType::Evidence, Payload::Evidence(claim));
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: AgentMessage = serde_json::from_str(&json).unwrap();
+        if let Payload::Evidence(c) = back.payload {
+            assert_eq!(c.task_id, "task-42");
+            assert_eq!(c.claim, "built auth module");
+            assert_eq!(c.witness.as_deref(), Some("PR #42"));
+        } else {
+            panic!("expected Payload::Evidence after round-trip");
+        }
+    }
+
+    #[test]
+    fn payload_evidence_verify_round_trip_in_message() {
+        // Both outcomes — verify (true) and fail (false) — must round-trip.
+        for (outcome, note) in [(true, None), (false, Some("rollback".to_string()))] {
+            let v = EvidenceVerifyMsg {
+                evidence_id: "ev-1".to_string(),
+                outcome,
+                note: note.clone(),
+            };
+            let from = AgentAddress::new("verifier", "api");
+            let msg = AgentMessage::new(
+                from,
+                None,
+                MessageType::EvidenceVerify,
+                Payload::EvidenceVerify(v),
+            );
+            let json = serde_json::to_string(&msg).unwrap();
+            let back: AgentMessage = serde_json::from_str(&json).unwrap();
+            if let Payload::EvidenceVerify(v) = back.payload {
+                assert_eq!(v.evidence_id, "ev-1");
+                assert_eq!(v.outcome, outcome);
+                assert_eq!(v.note, note);
+            } else {
+                panic!("expected Payload::EvidenceVerify after round-trip");
+            }
+        }
+    }
+
+    #[test]
+    fn evidence_claim_serde_with_only_required_fields() {
+        // Minimal EvidenceClaim — task_id + claim only, no witness.  The
+        // /evidence slash command emits this shape; old DB rows / cached
+        // messages without `witness` must still parse.
+        let json = r#"{"task_id":"t","claim":"c"}"#;
+        let back: EvidenceClaim = serde_json::from_str(json).unwrap();
+        assert_eq!(back.task_id, "t");
+        assert_eq!(back.claim, "c");
+        assert!(back.witness.is_none());
     }
 }
