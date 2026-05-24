@@ -4,7 +4,7 @@
 //! context and knowledge across sessions.
 
 use async_trait::async_trait;
-use ch_protocol::MemoryEntry;
+use ch_protocol::{AgentId, MemoryEntry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -90,6 +90,116 @@ pub struct ImportResult {
     pub imported: usize,
     pub failed: usize,
     pub errors: Vec<String>,
+}
+
+// ─── Evidence (Maestro Task 2) ──────────────────────────────────────────────
+//
+// Evidence captures *auditable agent claims*: an agent says "I did X," the
+// claim is stored with status=Pending, and a verifier agent (or human) can
+// later flip it to Verified or Failed.  Together with Handoff Envelopes
+// (shipped 2026-05-23), Evidence is the foundation of the "collaboration OS
+// for agents" arc — Handoff = "what I'm passing along," Evidence = "what I
+// claim I did + who can verify it."
+//
+// Stored in a separate `evidence` table (NOT the messages table) so the
+// existing `MemoryEntry` schema stays untouched and the new write path can
+// have its own indexes (by task_id, correlation_id, status).
+
+/// Lifecycle of an evidence row.  Always starts at `Pending`; a successful
+/// `verify()` transitions to `Verified`, a `fail()` transitions to `Failed`.
+/// Once terminal (Verified|Failed), the row is immutable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceStatus {
+    Pending,
+    Verified,
+    Failed,
+}
+
+impl EvidenceStatus {
+    /// String form used in SQL (`status` column).  Matches the snake_case
+    /// serde form so JSON ↔ SQL round-trips are stable.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EvidenceStatus::Pending => "pending",
+            EvidenceStatus::Verified => "verified",
+            EvidenceStatus::Failed => "failed",
+        }
+    }
+
+    /// Inverse of `as_str`.  Unknown strings default to `Pending` rather
+    /// than failing — this keeps the system tolerant of forward-compat
+    /// rows written by a future version with new statuses.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "verified" => EvidenceStatus::Verified,
+            "failed" => EvidenceStatus::Failed,
+            _ => EvidenceStatus::Pending,
+        }
+    }
+}
+
+/// One row in the `evidence` table.  Created on `write_evidence`; mutated
+/// only by `verify()` or `fail()` (which set `status`, `verified_at`,
+/// `verified_by`, and optionally the `witness`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidenceRow {
+    /// Unique row ID (UUID stringified).
+    pub id: String,
+    /// Logical task this evidence belongs to.  Multiple evidence rows can
+    /// share a task_id when a single task produces several claims.
+    pub task_id: String,
+    /// Optional bus correlation_id linking this evidence back to the
+    /// originating request/response cycle.
+    pub correlation_id: Option<String>,
+    /// Agent that submitted the claim.
+    pub agent_id: AgentId,
+    /// Human-readable agent name at submission time (cached for display).
+    pub agent_name: String,
+    /// The claim itself, free-form.
+    pub claim: String,
+    /// Lifecycle state.
+    pub status: EvidenceStatus,
+    /// Optional pointer to supporting material (URL, file path, hash, etc.).
+    pub witness: Option<String>,
+    /// Free-form JSON sidecar for tool-specific extension data.
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+    /// When the claim was submitted.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// When the row transitioned to a terminal status (Verified|Failed).
+    pub verified_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Who performed the verification (agent name or "human:<name>").
+    pub verified_by: Option<String>,
+}
+
+/// Storage trait for evidence rows.  Implemented by `SqliteMemoryStore`
+/// alongside `MemoryStore` so a single store handle can persist both
+/// regular messages and evidence.
+#[async_trait]
+pub trait EvidenceStore: Send + Sync {
+    /// Persist a new evidence row.  `row.status` SHOULD be `Pending` at
+    /// write time; implementations may accept others for replay/import but
+    /// the normal write path is always Pending.
+    async fn write_evidence(&self, row: EvidenceRow) -> Result<()>;
+
+    /// Transition an evidence row from Pending → Verified.  Stamps
+    /// `verified_at` with the current time and `verified_by = by`.
+    /// Optionally overwrites `witness`.  Returns `NotFound` if `id`
+    /// doesn't exist; behavior on an already-terminal row is
+    /// implementation-defined (sqlite backend treats it as a no-op).
+    async fn verify(&self, id: &str, by: &str, witness: Option<String>) -> Result<()>;
+
+    /// Transition Pending → Failed.  Stores `reason` in the `metadata`
+    /// JSON under key `failure_reason`.
+    async fn fail(&self, id: &str, by: &str, reason: String) -> Result<()>;
+
+    /// All evidence rows for a task, oldest first (created_at ASC).
+    async fn by_task(&self, task_id: &str) -> Result<Vec<EvidenceRow>>;
+
+    /// Up to `limit` evidence rows still in Pending status, oldest first.
+    /// Convenient for a verifier agent's poll loop.
+    async fn pending(&self, limit: usize) -> Result<Vec<EvidenceRow>>;
 }
 
 /// Memory store trait - all backends must implement this
