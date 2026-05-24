@@ -198,8 +198,14 @@ pub trait EvidenceStore: Send + Sync {
     async fn by_task(&self, task_id: &str) -> Result<Vec<EvidenceRow>>;
 
     /// Up to `limit` evidence rows still in Pending status, oldest first.
-    /// Convenient for a verifier agent's poll loop.
+    /// Convenient for a verifier agent's poll loop.  Equivalent to
+    /// `by_status(EvidenceStatus::Pending, limit)`; kept as a named
+    /// shortcut because it's the common case.
     async fn pending(&self, limit: usize) -> Result<Vec<EvidenceRow>>;
+
+    /// Up to `limit` evidence rows matching the given status, oldest first.
+    /// Used by `crow memory evidence --status verified|failed|pending`.
+    async fn by_status(&self, status: EvidenceStatus, limit: usize) -> Result<Vec<EvidenceRow>>;
 }
 
 /// Memory store trait - all backends must implement this

@@ -461,13 +461,17 @@ impl EvidenceStore for SqliteMemoryStore {
     }
 
     async fn pending(&self, limit: usize) -> Result<Vec<EvidenceRow>> {
-        let rows = sqlx::query(
-            "SELECT * FROM evidence WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?",
-        )
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| MemoryError::Backend(e.to_string()))?;
+        self.by_status(EvidenceStatus::Pending, limit).await
+    }
+
+    async fn by_status(&self, status: EvidenceStatus, limit: usize) -> Result<Vec<EvidenceRow>> {
+        let rows =
+            sqlx::query("SELECT * FROM evidence WHERE status = ? ORDER BY created_at ASC LIMIT ?")
+                .bind(status.as_str())
+                .bind(limit as i64)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
         rows.into_iter().map(Self::row_to_evidence).collect()
     }
@@ -670,5 +674,27 @@ mod tests {
         let store = fresh_store().await;
         let result = store.verify("does-not-exist", "v", None).await;
         assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn evidence_by_status_filters_correctly() {
+        let store = fresh_store().await;
+        // Seed: 2 pending, 1 verified, 1 failed.
+        for i in 0..4 {
+            let mut row = sample_evidence(&format!("ev-{}", i), "task-x", "c");
+            row.created_at = DateTime::from_timestamp(1_000 + i as i64, 0).unwrap();
+            store.write_evidence(row).await.unwrap();
+        }
+        store.verify("ev-2", "v", None).await.unwrap();
+        store.fail("ev-3", "v", "bad".to_string()).await.unwrap();
+
+        let pending = store.by_status(EvidenceStatus::Pending, 10).await.unwrap();
+        assert_eq!(pending.len(), 2);
+        let verified = store.by_status(EvidenceStatus::Verified, 10).await.unwrap();
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].id, "ev-2");
+        let failed = store.by_status(EvidenceStatus::Failed, 10).await.unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].id, "ev-3");
     }
 }

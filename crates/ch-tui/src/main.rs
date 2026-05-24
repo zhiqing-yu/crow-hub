@@ -123,6 +123,21 @@ enum MemoryCommands {
     },
     /// Show the total count of persisted messages
     Count,
+    /// List evidence rows (Maestro Task 2: auditable agent claims).
+    /// Default: shows pending rows.  Filter by --task or --status.
+    Evidence {
+        /// Filter to a specific task_id.  When set, --status is applied
+        /// in-memory (so you see all statuses for that task by default).
+        #[arg(short, long)]
+        task: Option<String>,
+        /// Filter by status (pending, verified, failed, all).
+        /// Default: pending when no --task; all when --task is set.
+        #[arg(short, long)]
+        status: Option<String>,
+        /// Maximum rows to show (default 50)
+        #[arg(short = 'n', long, default_value_t = 50)]
+        count: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -615,6 +630,11 @@ async fn run_memory(command: MemoryCommands) -> anyhow::Result<()> {
     match command {
         MemoryCommands::Tail { count, channel } => run_memory_tail(channel, count).await,
         MemoryCommands::Count => run_memory_count().await,
+        MemoryCommands::Evidence {
+            task,
+            status,
+            count,
+        } => run_memory_evidence(task, status, count).await,
     }
 }
 
@@ -690,6 +710,122 @@ async fn run_memory_count() -> anyhow::Result<()> {
     let store = open_memory_store().await?;
     let n = store.count().await?;
     println!("Stored messages: {}", n);
+    Ok(())
+}
+
+/// List rows from the `evidence` table (Maestro Task 2).  Filter modes:
+///
+/// * No flags                       → pending rows (verifier worklist)
+/// * `--task <id>`                  → all evidence for one task (any status)
+/// * `--status verified|failed|pending|all`
+/// * `--task <id> --status <s>`     → task scoped + status filtered in-memory
+async fn run_memory_evidence(
+    task: Option<String>,
+    status: Option<String>,
+    count: usize,
+) -> anyhow::Result<()> {
+    use ch_memory::{EvidenceStatus, EvidenceStore};
+
+    let store = open_memory_store().await?;
+
+    // Resolve effective status filter.  Default depends on whether --task
+    // was passed: scoping to a task usually means "show me everything for
+    // it," whereas a global call usually means "what's pending?"
+    let default_status = if task.is_some() { "all" } else { "pending" };
+    let status_str = status.as_deref().unwrap_or(default_status).to_lowercase();
+
+    let rows = if let Some(ref task_id) = task {
+        // Task-scoped: use by_task() and filter in-memory.
+        let all = store.by_task(task_id).await?;
+        if status_str == "all" {
+            all.into_iter().take(count).collect()
+        } else {
+            let want = match status_str.as_str() {
+                "verified" => EvidenceStatus::Verified,
+                "failed" => EvidenceStatus::Failed,
+                "pending" => EvidenceStatus::Pending,
+                other => {
+                    anyhow::bail!(
+                        "invalid --status '{}'; expected pending|verified|failed|all",
+                        other
+                    );
+                }
+            };
+            all.into_iter()
+                .filter(|r| r.status == want)
+                .take(count)
+                .collect()
+        }
+    } else if status_str == "all" {
+        // Global "all" — UNION of the three statuses, oldest first.
+        let mut all = store.by_status(EvidenceStatus::Pending, count).await?;
+        all.extend(store.by_status(EvidenceStatus::Verified, count).await?);
+        all.extend(store.by_status(EvidenceStatus::Failed, count).await?);
+        all.sort_by_key(|r| r.created_at);
+        all.into_iter().take(count).collect()
+    } else {
+        let want = match status_str.as_str() {
+            "verified" => EvidenceStatus::Verified,
+            "failed" => EvidenceStatus::Failed,
+            "pending" => EvidenceStatus::Pending,
+            other => {
+                anyhow::bail!(
+                    "invalid --status '{}'; expected pending|verified|failed|all",
+                    other
+                );
+            }
+        };
+        store.by_status(want, count).await?
+    };
+
+    println!(
+        "━━━ crow memory evidence — task: {}, status: {}, {} rows ━━━",
+        task.as_deref().unwrap_or("(any)"),
+        status_str,
+        rows.len(),
+    );
+    if rows.is_empty() {
+        println!("(no evidence rows match)");
+        println!("Tip: in the TUI, `/evidence claim <text>` emits an evidence");
+        println!("row; agents can also emit them programmatically.");
+        return Ok(());
+    }
+
+    for row in rows {
+        // Glyph by status — `?` waiting, `✓` verified, `✗` failed.
+        let glyph = match row.status {
+            EvidenceStatus::Pending => "?",
+            EvidenceStatus::Verified => "✓",
+            EvidenceStatus::Failed => "✗",
+        };
+        let ts = row.created_at.format("%m-%d %H:%M:%S");
+        let claim = {
+            const MAX: usize = 80;
+            let c = row.claim.replace('\n', " ").replace('\r', " ");
+            if c.chars().count() > MAX {
+                c.chars().take(MAX).collect::<String>() + "…"
+            } else {
+                c
+            }
+        };
+        println!(
+            "{}  {}  task={:<14}  by={:<22}  {}",
+            ts, glyph, row.task_id, row.agent_name, claim,
+        );
+        if let Some(witness) = row.witness.as_ref() {
+            println!("    witness: {}", witness);
+        }
+        if let Some(verified_by) = row.verified_by.as_ref() {
+            let when = row
+                .verified_at
+                .map(|t| t.format("%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "?".to_string());
+            println!("    {} at {} by {}", glyph, when, verified_by);
+        }
+        if let Some(reason) = row.metadata.get("failure_reason").and_then(|v| v.as_str()) {
+            println!("    reason: {}", reason);
+        }
+    }
     Ok(())
 }
 
