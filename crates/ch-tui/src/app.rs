@@ -4,7 +4,8 @@ use ch_agent::{AgentActivity, AgentInfo, AgentRuntime};
 use ch_core::MessageBus;
 use ch_memory::MemoryStore;
 use ch_protocol::{
-    AgentAddress, AgentId, AgentMessage, HandoffEnvelope, MemoryEntry, MessageType, Payload,
+    AgentAddress, AgentId, AgentMessage, EvidenceClaim, HandoffEnvelope, MemoryEntry, MessageType,
+    Payload,
 };
 use crossterm::{
     event::{
@@ -32,7 +33,8 @@ use tokio::sync::mpsc;
 /// a regression test in `tests` asserts every entry here appears in
 /// `help_lines()`, so adding a new command without updating `/help` will
 /// fail CI rather than silently leaving users without docs.
-pub const SUPPORTED_COMMANDS: &[&str] = &["/clear", "/model", "/all", "/handoff", "/help"];
+pub const SUPPORTED_COMMANDS: &[&str] =
+    &["/clear", "/model", "/all", "/handoff", "/evidence", "/help"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum FocusedPanel {
@@ -243,6 +245,66 @@ impl App {
                     });
                 }
             }
+            "/evidence" => {
+                // Manual evidence claim emission.  Syntax:
+                //   /evidence claim <text>
+                // Builds an EvidenceClaim with task_id defaulted to the TUI
+                // session's user_agent_id (so claims from the same TUI session
+                // group together), broadcasts on the bus.  The memory writer
+                // persists this to the `evidence` table with status=pending;
+                // `crow memory evidence` lists them.
+                let (subcmd, rest) = match arg.split_once(' ') {
+                    Some((s, r)) => (s.trim(), r.trim()),
+                    None => (arg, ""),
+                };
+                match subcmd {
+                    "claim" if !rest.is_empty() => {
+                        let claim = EvidenceClaim {
+                            task_id: self.user_agent_id.to_string(),
+                            claim: rest.to_string(),
+                            witness: None,
+                        };
+                        // Local feedback line.  `📋` glyph distinguishes evidence
+                        // from handoffs (⇄) and regular chat; the chat scope
+                        // filter passes any line starting with `📋`.
+                        self.messages.push(format!("📋 You → claimed: {}", rest));
+
+                        let bus = self.bus.clone();
+                        let user_id = self.user_agent_id;
+                        let from_addr = AgentAddress {
+                            agent_id: user_id,
+                            agent_name: "You".to_string(),
+                            adapter_type: "tui".to_string(),
+                        };
+                        let bus_msg = AgentMessage::new(
+                            from_addr,
+                            None,
+                            MessageType::Evidence,
+                            Payload::Evidence(claim),
+                        );
+                        tokio::spawn(async move {
+                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await
+                            {
+                                tracing::error!("Failed to send evidence to bus: {}", e);
+                            }
+                        });
+                    }
+                    "claim" => {
+                        self.messages
+                            .push("/evidence claim — usage: /evidence claim <text>".into());
+                    }
+                    "" => {
+                        self.messages
+                            .push("/evidence — usage: /evidence claim <text>".into());
+                    }
+                    other => {
+                        self.messages.push(format!(
+                            "/evidence — unknown sub-command '{}' (try: claim)",
+                            other
+                        ));
+                    }
+                }
+            }
             "/help" => {
                 for line in help_lines() {
                     self.messages.push(line);
@@ -305,6 +367,7 @@ pub(crate) fn help_lines() -> Vec<String> {
         "/model <name>       Override model for next messages (blank to show)".to_string(),
         "/all                Unscope chat (show all agents)".to_string(),
         "/handoff <summary>  Emit a Handoff envelope on the bus".to_string(),
+        "/evidence claim <text>  Emit an Evidence claim on the bus".to_string(),
         "/help               Show this help".to_string(),
         "┈┈┈ Keyboard Shortcuts ┈┈┈".to_string(),
         "Tab         Switch panel (Agents→Chat→Memory→Input)".to_string(),
@@ -888,6 +951,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 Some(name) => {
                     m.starts_with("You:")
                         || m.starts_with("⇄")
+                        || m.starts_with("📋")
                         || m.starts_with(&format!("{}:", name))
                 }
                 None => true,
