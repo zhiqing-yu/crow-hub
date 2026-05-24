@@ -78,6 +78,8 @@ pub struct App {
     pub memory_store: Option<Arc<dyn MemoryStore>>,
     /// Cached memory rows for the current channel
     pub memory_rows: Vec<MemoryEntry>,
+    /// Pending memory refresh result (populated by background task)
+    pub pending_memory: Arc<std::sync::Mutex<Option<Vec<MemoryEntry>>>>,
     /// Scroll offset for the memory panel
     pub memory_scroll_offset: usize,
     /// Active theme
@@ -118,6 +120,7 @@ impl App {
             tick_count: 0,
             memory_store,
             memory_rows: Vec::new(),
+            pending_memory: Arc::new(std::sync::Mutex::new(None)),
             memory_scroll_offset: 0,
             theme: crate::theme::from_env(),
             default_model: String::new(),
@@ -152,16 +155,23 @@ impl App {
         resolve_send_targets(&agent_names, &self.multi_selected, self.selected_agent)
     }
 
-    /// Refresh the memory panel from the SQLite store.
-    /// Safe to call from a sync context (blocks on tokio handle).
+    /// Kick off a background memory refresh.
     pub fn refresh_memory(&mut self) {
         if let Some(ref store) = self.memory_store {
             let store = store.clone();
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                if let Ok(rows) = handle.block_on(store.recent("general", 50)) {
-                    self.memory_rows = rows;
+            let pending = self.pending_memory.clone();
+            tokio::spawn(async move {
+                if let Ok(rows) = store.recent("general", 50).await {
+                    *pending.lock().unwrap() = Some(rows);
                 }
-            }
+            });
+        }
+    }
+
+    /// Collect results from a background memory refresh.
+    pub fn collect_memory_refresh(&mut self) {
+        if let Some(rows) = self.pending_memory.lock().unwrap().take() {
+            self.memory_rows = rows;
         }
     }
 
@@ -376,6 +386,7 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.tick_count = self.tick_count.wrapping_add(1);
+        self.collect_memory_refresh();
         while let Ok((agent, response)) = self.response_rx.try_recv() {
             append_chat_message(&mut self.messages, &agent, &response);
         }
