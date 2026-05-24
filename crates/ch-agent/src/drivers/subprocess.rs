@@ -644,7 +644,7 @@ impl AgentDriver for SubprocessDriver {
         })
         .await;
 
-        match read_result {
+        let result = match read_result {
             Ok(Ok(_)) => {
                 let raw = String::from_utf8_lossy(&buf).to_string();
                 let content = self.process_output(&raw);
@@ -660,7 +660,10 @@ impl AgentDriver for SubprocessDriver {
             Err(_) => Err(AgentError::Driver(
                 "Subprocess response timed out after 120s".into(),
             )),
-        }
+        };
+        // Restart on next request — stdin was closed to flush output.
+        *child_lock = None;
+        result
     }
 
     async fn stream_chat(
