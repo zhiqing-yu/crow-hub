@@ -628,7 +628,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                         KeyCode::Char('r') if app.focused_panel == FocusedPanel::Memory => {
                             app.refresh_memory();
                         }
-                        KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents => {
+                        KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents && app.input.is_empty() => {
                             // Space on Agents panel = toggle multi-select on
                             // the cursored agent.  Pressing Enter while any
                             // agents are multi-selected broadcasts the prompt
@@ -800,8 +800,20 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             }
         })
         .collect();
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let version_span = Span::styled(
+        version,
+        Style::default().fg(Color::DarkGray),
+    );
     f.render_widget(
         Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(Color::Black)),
+        tab_area,
+    );
+    // Version in top-right corner
+    f.render_widget(
+        Paragraph::new(version_span)
+            .style(Style::default().bg(Color::Black))
+            .alignment(ratatui::layout::Alignment::Right),
         tab_area,
     );
 
@@ -902,7 +914,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     let mut agents_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("Agents  v{}", env!("CARGO_PKG_VERSION")));
+        .title("Agents");
     if app.focused_panel == FocusedPanel::Agents {
         agents_block = agents_block.border_style(Style::default().fg(app.theme.border_focused));
     }
