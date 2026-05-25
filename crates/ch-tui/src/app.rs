@@ -384,6 +384,11 @@ impl App {
         true
     }
 
+    fn input_line_count(&self) -> usize {
+        if self.input.is_empty() { return 1; }
+        wrap_text(&self.input, 60).len().max(1)
+    }
+
     pub fn on_tick(&mut self) {
         self.tick_count = self.tick_count.wrapping_add(1);
         self.collect_memory_refresh();
@@ -604,7 +609,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.chat_scroll_offset = app.chat_scroll_offset.saturating_add(1);
                             }
                             FocusedPanel::Input => {
-                                app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1);
+                                if app.input_line_count() > 7 { app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1); }
                             }
                             FocusedPanel::Memory => {
                                 app.memory_scroll_offset =
@@ -622,7 +627,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(1);
                             }
                             FocusedPanel::Input => {
-                                app.input_scroll_offset = app.input_scroll_offset.saturating_add(1);
+                                if app.input_line_count() > 7 { app.input_scroll_offset = app.input_scroll_offset.saturating_add(1); }
                             }
                             FocusedPanel::Memory => {
                                 app.memory_scroll_offset =
