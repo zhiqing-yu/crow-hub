@@ -11,8 +11,8 @@ use thiserror::Error;
 
 pub mod backends;
 pub mod embedder;
-pub mod writer;
 pub mod verifier;
+pub mod writer;
 
 /// Memory error types
 #[derive(Error, Debug, Clone)]

@@ -179,7 +179,9 @@ pub fn spawn_memory_writer(
             // Fan out Handoff decisions as pending Evidence rows
             if let Some(env) = handoff_env {
                 if !env.decisions.is_empty() {
-                    let task_id = msg.correlation_id.map(|c| c.to_string())
+                    let task_id = msg
+                        .correlation_id
+                        .map(|c| c.to_string())
                         .unwrap_or_else(|| msg.message_id.to_string());
                     let evidence_store = evidence_store.clone();
                     for (idx, decision) in env.decisions.iter().enumerate() {

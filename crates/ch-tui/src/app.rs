@@ -310,7 +310,11 @@ impl App {
                         let user_id = self.user_agent_id;
                         let from_name = "You".to_string();
                         let bus_msg = AgentMessage::new(
-                            AgentAddress { agent_id: user_id, agent_name: from_name, adapter_type: "tui".into() },
+                            AgentAddress {
+                                agent_id: user_id,
+                                agent_name: from_name,
+                                adapter_type: "tui".into(),
+                            },
                             None,
                             MessageType::EvidenceVerify,
                             Payload::EvidenceVerify(ch_protocol::EvidenceVerifyMsg {
@@ -321,24 +325,34 @@ impl App {
                             }),
                         );
                         tokio::spawn(async move {
-                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
+                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await
+                            {
                                 tracing::error!("Failed to send evidence verify to bus: {}", e);
                             }
                         });
                     }
                     "verify" => {
-                        self.messages.push("/evidence verify — usage: /evidence verify <id>".into());
+                        self.messages
+                            .push("/evidence verify — usage: /evidence verify <id>".into());
                     }
                     "fail" if !rest.is_empty() => {
                         let parts: Vec<&str> = rest.splitn(2, ' ').collect();
                         let id = parts[0].to_string();
-                        let reason = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| "failed manually in TUI".to_string());
-                        self.messages.push(format!("📋 You → failed: {} ({})", id, reason));
+                        let reason = parts
+                            .get(1)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "failed manually in TUI".to_string());
+                        self.messages
+                            .push(format!("📋 You → failed: {} ({})", id, reason));
                         let bus = self.bus.clone();
                         let user_id = self.user_agent_id;
                         let from_name = "You".to_string();
                         let bus_msg = AgentMessage::new(
-                            AgentAddress { agent_id: user_id, agent_name: from_name, adapter_type: "tui".into() },
+                            AgentAddress {
+                                agent_id: user_id,
+                                agent_name: from_name,
+                                adapter_type: "tui".into(),
+                            },
                             None,
                             MessageType::EvidenceVerify,
                             Payload::EvidenceVerify(ch_protocol::EvidenceVerifyMsg {
@@ -349,13 +363,15 @@ impl App {
                             }),
                         );
                         tokio::spawn(async move {
-                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await {
+                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await
+                            {
                                 tracing::error!("Failed to send evidence fail to bus: {}", e);
                             }
                         });
                     }
                     "fail" => {
-                        self.messages.push("/evidence fail — usage: /evidence fail <id> <reason>".into());
+                        self.messages
+                            .push("/evidence fail — usage: /evidence fail <id> <reason>".into());
                     }
                     "" => {
                         self.messages
@@ -385,7 +401,9 @@ impl App {
     }
 
     fn input_line_count(&self) -> usize {
-        if self.input.is_empty() { return 1; }
+        if self.input.is_empty() {
+            return 1;
+        }
         wrap_text(&self.input, 60).len().max(1)
     }
 
@@ -609,7 +627,10 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.chat_scroll_offset = app.chat_scroll_offset.saturating_add(1);
                             }
                             FocusedPanel::Input => {
-                                if app.input_line_count() > 7 { app.input_scroll_offset = app.input_scroll_offset.saturating_sub(1); }
+                                if app.input_line_count() > 7 {
+                                    app.input_scroll_offset =
+                                        app.input_scroll_offset.saturating_sub(1);
+                                }
                             }
                             FocusedPanel::Memory => {
                                 app.memory_scroll_offset =
@@ -627,7 +648,10 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(1);
                             }
                             FocusedPanel::Input => {
-                                if app.input_line_count() > 7 { app.input_scroll_offset = app.input_scroll_offset.saturating_add(1); }
+                                if app.input_line_count() > 7 {
+                                    app.input_scroll_offset =
+                                        app.input_scroll_offset.saturating_add(1);
+                                }
                             }
                             FocusedPanel::Memory => {
                                 app.memory_scroll_offset =
@@ -873,7 +897,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             }
 
             let mut spans = Vec::new();
-            spans.push(Span::styled(display_glyph, Style::default().fg(display_color)));
+            spans.push(Span::styled(
+                display_glyph,
+                Style::default().fg(display_color),
+            ));
             if !suffix.is_empty() {
                 spans.push(Span::styled(
                     format!("{} ", suffix),
@@ -896,9 +923,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         })
         .collect();
 
-    let mut agents_block = Block::default()
-        .borders(Borders::ALL)
-        .title("Agents");
+    let mut agents_block = Block::default().borders(Borders::ALL).title("Agents");
     if app.focused_panel == FocusedPanel::Agents {
         agents_block = agents_block.border_style(Style::default().fg(app.theme.border_focused));
     }
@@ -1006,13 +1031,15 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
             let mut rows: Vec<ListItem> = Vec::new();
             // Header
-            rows.push(ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{:<22} {:>6} {:>8} {:>10} {:>10} {:>8}",
-                        "Agent", "Status", "Latency", "Tok In", "Tok Out", "Cost"),
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+            rows.push(ListItem::new(Line::from(vec![Span::styled(
+                format!(
+                    "{:<22} {:>6} {:>8} {:>10} {:>10} {:>8}",
+                    "Agent", "Status", "Latency", "Tok In", "Tok Out", "Cost"
                 ),
-            ])));
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )])));
             rows.push(ListItem::new(Line::from(Span::styled(
                 "─".repeat(monitor_inner.width as usize),
                 Style::default().fg(Color::DarkGray),
@@ -1024,9 +1051,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                     render_activity(&activity, app.tick_count, &app.theme);
 
                 let (status_label, latency, tok_in, tok_out, cost) = match &activity {
-                    AgentActivity::Unknown => (
-                        "new", "—".into(), "—".into(), "—".into(), "—".into(),
-                    ),
+                    AgentActivity::Unknown => {
+                        ("new", "—".into(), "—".into(), "—".into(), "—".into())
+                    }
                     AgentActivity::Idle {
                         last_latency_ms,
                         cumulative_tokens_in,
@@ -1034,14 +1061,34 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                         cumulative_cost_usd,
                     } => (
                         "ready",
-                        last_latency_ms.map(format_latency).unwrap_or_else(|| "—".into()),
-                        if *cumulative_tokens_in > 0 { format_tokens(*cumulative_tokens_in) } else { "—".into() },
-                        if *cumulative_tokens_out > 0 { format_tokens(*cumulative_tokens_out) } else { "—".into() },
-                        if *cumulative_cost_usd > 0.0 { format!("${:.2}", cumulative_cost_usd) } else { "—".into() },
+                        last_latency_ms
+                            .map(format_latency)
+                            .unwrap_or_else(|| "—".into()),
+                        if *cumulative_tokens_in > 0 {
+                            format_tokens(*cumulative_tokens_in)
+                        } else {
+                            "—".into()
+                        },
+                        if *cumulative_tokens_out > 0 {
+                            format_tokens(*cumulative_tokens_out)
+                        } else {
+                            "—".into()
+                        },
+                        if *cumulative_cost_usd > 0.0 {
+                            format!("${:.2}", cumulative_cost_usd)
+                        } else {
+                            "—".into()
+                        },
                     ),
                     AgentActivity::Thinking { since } => {
                         let elapsed = (chrono::Utc::now() - *since).num_seconds().max(0);
-                        ("think", format!("{}s…", elapsed), "—".into(), "—".into(), "—".into())
+                        (
+                            "think",
+                            format!("{}s…", elapsed),
+                            "—".into(),
+                            "—".into(),
+                            "—".into(),
+                        )
                     }
                     AgentActivity::Errored { last_error } => {
                         let err_short: String = last_error.chars().take(30).collect();
@@ -1050,7 +1097,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 };
 
                 let multi = app.multi_selected.contains(
-                    &app.agents.iter().position(|x| x.name == a.name).unwrap_or(usize::MAX),
+                    &app.agents
+                        .iter()
+                        .position(|x| x.name == a.name)
+                        .unwrap_or(usize::MAX),
                 );
                 let name_color = if multi {
                     app.theme.agent_multi
@@ -1060,10 +1110,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
                 rows.push(ListItem::new(Line::from(vec![
                     Span::styled(glyph, Style::default().fg(glyph_color)),
-                    Span::styled(
-                        format!("{:<21}", a.name),
-                        Style::default().fg(name_color),
-                    ),
+                    Span::styled(format!("{:<21}", a.name), Style::default().fg(name_color)),
                     Span::styled(
                         format!(" {:>6}", status_label),
                         Style::default().fg(glyph_color),

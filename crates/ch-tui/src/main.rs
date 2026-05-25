@@ -424,10 +424,13 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
 
     // Spawn evidence verifier (same as TUI path)
     let verifier_interval = std::env::var("CROW_VERIFIER_INTERVAL_SECS")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(10);
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
     if std::env::var("CROW_VERIFIER_OFF").unwrap_or_default() != "1" {
         let _ = ch_memory::verifier::spawn_verifier(
-            hub.bus.clone(), memory_store.clone(),
+            hub.bus.clone(),
+            memory_store.clone(),
             vec![Box::new(ch_memory::verifier::KeywordRule)],
             std::time::Duration::from_secs(verifier_interval),
         );
