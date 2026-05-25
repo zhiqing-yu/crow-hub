@@ -836,12 +836,12 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 Span::styled(
                     format!(" {} ", label),
                     Style::default()
-                        .fg(Color::Black)
+                        .fg(app.theme.tab_active_text)
                         .bg(app.theme.border_focused)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
-                Span::styled(format!(" {} ", label), Style::default().fg(Color::Gray))
+                Span::styled(format!(" {} ", label), Style::default().fg(app.theme.tab_inactive))
             }
         })
         .collect();
@@ -854,9 +854,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     if pad > 0 {
         final_spans.push(Span::raw(" ".repeat(pad)));
     }
-    final_spans.push(Span::styled(version, Style::default().fg(Color::DarkGray)));
+    final_spans.push(Span::styled(version, Style::default().fg(app.theme.agent_meta)));
     f.render_widget(
-        Paragraph::new(Line::from(final_spans)).style(Style::default().bg(Color::Black)),
+        Paragraph::new(Line::from(final_spans)).style(Style::default().bg(app.theme.surface)),
         tab_area,
     );
 
@@ -924,7 +924,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             let model_line = a.default_model.as_ref().map(|m| {
                 Line::from(Span::styled(
                     format!("   {}", m),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(app.theme.agent_meta),
                 ))
             });
             if let Some(ml) = model_line {
@@ -1049,12 +1049,12 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                     "Agent", "Status", "Latency", "Tok In", "Tok Out", "Cost"
                 ),
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(app.theme.agent_meta)
                     .add_modifier(Modifier::BOLD),
             )])));
             rows.push(ListItem::new(Line::from(Span::styled(
                 "─".repeat(monitor_inner.width as usize),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(app.theme.agent_meta),
             ))));
 
             for a in &app.agents {
@@ -1117,7 +1117,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 let name_color = if multi {
                     app.theme.agent_multi
                 } else {
-                    Color::White
+                    app.theme.agent_cursor
                 };
 
                 rows.push(ListItem::new(Line::from(vec![
@@ -1133,15 +1133,15 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                     ),
                     Span::styled(
                         format!(" {:>10}", tok_in),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(app.theme.agent_meta),
                     ),
                     Span::styled(
                         format!(" {:>10}", tok_out),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(app.theme.agent_meta),
                     ),
                     Span::styled(
                         format!(" {:>8}", cost),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(app.theme.agent_meta),
                     ),
                 ])));
 
@@ -1149,7 +1149,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 if let Some(ref model) = a.default_model {
                     rows.push(ListItem::new(Line::from(Span::styled(
                         format!("  └ model: {}", model),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(app.theme.agent_meta),
                     ))));
                 }
             }
