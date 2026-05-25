@@ -628,7 +628,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                         KeyCode::Char('r') if app.focused_panel == FocusedPanel::Memory => {
                             app.refresh_memory();
                         }
-                        KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents && app.input.is_empty() => {
+                        KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents => {
                             // Space on Agents panel = toggle multi-select on
                             // the cursored agent.  Pressing Enter while any
                             // agents are multi-selected broadcasts the prompt
