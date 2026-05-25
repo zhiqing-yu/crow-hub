@@ -800,20 +800,18 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             }
         })
         .collect();
+    // Pad version to the right edge of the tab bar
     let version = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let version_span = Span::styled(
-        version,
-        Style::default().fg(Color::DarkGray),
-    );
+    let tab_width = tab_area.width as usize;
+    let used: usize = tab_spans.iter().map(|s| s.width()).sum();
+    let pad = tab_width.saturating_sub(used + version.len());
+    let mut final_spans = tab_spans;
+    if pad > 0 {
+        final_spans.push(Span::raw(" ".repeat(pad)));
+    }
+    final_spans.push(Span::styled(version, Style::default().fg(Color::DarkGray)));
     f.render_widget(
-        Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(Color::Black)),
-        tab_area,
-    );
-    // Version in top-right corner
-    f.render_widget(
-        Paragraph::new(version_span)
-            .style(Style::default().bg(Color::Black))
-            .alignment(ratatui::layout::Alignment::Right),
+        Paragraph::new(Line::from(final_spans)).style(Style::default().bg(Color::Black)),
         tab_area,
     );
 
