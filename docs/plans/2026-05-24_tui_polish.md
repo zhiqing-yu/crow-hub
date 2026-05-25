@@ -407,6 +407,13 @@ overlay covers toasts):
 
 ## Out of scope (deliberately, save for future plans)
 
+- **"Agents" management tab** — register / unregister / configure
+  CLI clients (a CRUD view on `~/.crow-hub/plugins/*.toml`).  Tab
+  vocabulary is reserved (renamed today's dashboard tab to "Home"
+  to free up the name).  Future tab would add a 5th `Tab::Agents`
+  variant with an editor view; non-trivial because it needs file IO,
+  validation, and a live-reload signal to the runtime.  Likely a
+  whole-session task on its own.
 - **Markdown rendering in chat** — `**bold**`, inline `` `code` ``,
   fenced code blocks.  Useful (most LLM output is markdown) but a
   proper job needs `pulldown-cmark` or similar + careful span

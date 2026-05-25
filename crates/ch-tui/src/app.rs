@@ -44,9 +44,17 @@ pub enum FocusedPanel {
     Memory,
 }
 
+/// Top-level views in the TUI.  Each tab is a different lens on the same
+/// underlying state.
+///
+/// Naming note: `Home` is the dashboard view (agent activity summary,
+/// status glyphs, recent throughput).  The label "Agents" is intentionally
+/// reserved for a future management view (register / unregister / configure
+/// CLI clients) so we don't conflate "look at agent status" with "edit the
+/// agent roster."
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Tab {
-    Agents,
+    Home,
     Chat,
     Monitor,
     Memory,
@@ -591,14 +599,14 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                         KeyCode::Tab => {
                             // Tab bar: cycle through tabs
                             app.active_tab = match app.active_tab {
-                                Tab::Agents => Tab::Chat,
+                                Tab::Home => Tab::Chat,
                                 Tab::Chat => Tab::Monitor,
                                 Tab::Monitor => Tab::Memory,
-                                Tab::Memory => Tab::Agents,
+                                Tab::Memory => Tab::Home,
                             };
                             // Auto-focus appropriate panel
                             app.focused_panel = match app.active_tab {
-                                Tab::Agents => FocusedPanel::Agents,
+                                Tab::Home => FocusedPanel::Agents,
                                 _ => FocusedPanel::Input,
                             };
                             if app.active_tab == Tab::Memory {
@@ -811,8 +819,12 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .split(chunks[1]);
 
     // ── Tab Bar ─────────────────────────────────────────────────
+    // "Home" = the dashboard view (status of all agents).  The label
+    // "Agents" is reserved for a future management tab (register /
+    // unregister / configure CLI clients) — see follow-up note in
+    // docs/plans/2026-05-24_tui_polish.md.
     let tabs = [
-        ("Agents", Tab::Agents),
+        ("Home", Tab::Home),
         ("Chat", Tab::Chat),
         ("Monitor", Tab::Monitor),
         ("Memory", Tab::Memory),
