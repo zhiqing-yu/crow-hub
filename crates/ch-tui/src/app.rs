@@ -1224,10 +1224,14 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         FocusedPanel::Input => "Enter:send  Tab:next  Ctrl+C:quit",
         FocusedPanel::Memory => "↑↓:scroll  r:refresh  Tab:next  Ctrl+C:quit",
     };
-    let footer = Paragraph::new(shortcuts)
-        .style(Style::default().fg(app.theme.footer).bg(Color::Black))
-        .alignment(ratatui::layout::Alignment::Center);
-    f.render_widget(footer, footer_area);
+    let footer_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)].as_ref())
+        .split(footer_area);
+    f.render_widget(Paragraph::new(shortcuts).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)), footer_chunks[0]);
+    let target = if app.multi_selected.is_empty() { app.agents.get(app.selected_agent).map(|a| format!("You → {}", a.name)).unwrap_or_default() } else { format!("You → [{}]", app.multi_selected.len()) };
+    f.render_widget(Paragraph::new(target).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)).alignment(ratatui::layout::Alignment::Center), footer_chunks[1]);
+    f.render_widget(Paragraph::new(format!("v{}", env!("CARGO_PKG_VERSION"))).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)).alignment(ratatui::layout::Alignment::Right), footer_chunks[2]);
 }
 
 /// Map an `AgentActivity` to (glyph, color, suffix) for the agent list.
