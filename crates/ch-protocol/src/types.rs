@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Configuration for agent adapters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdapterConfig {
     pub adapter_type: String,
@@ -12,7 +11,6 @@ pub struct AdapterConfig {
     pub config: HashMap<String, serde_json::Value>,
 }
 
-/// Session configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub session_id: String,
@@ -22,7 +20,6 @@ pub struct SessionConfig {
     pub timeout_seconds: u64,
 }
 
-/// Workflow definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workflow {
     pub workflow_id: String,
@@ -31,9 +28,15 @@ pub struct Workflow {
     pub variables: HashMap<String, serde_json::Value>,
 }
 
-/// Workflow step
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkflowStepState { Pending, Claimed, InProgress, Done, Failed }
+
+fn default_state() -> WorkflowStepState { WorkflowStepState::Pending }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStep {
+    #[serde(default = "default_state")]
+    pub state: WorkflowStepState,
     pub step_id: String,
     pub name: String,
     pub agent_id: String,
@@ -44,7 +47,6 @@ pub struct WorkflowStep {
     pub condition: Option<String>,
 }
 
-/// Capability advertised by an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Capability {
     pub name: String,
@@ -53,7 +55,6 @@ pub struct Capability {
     pub returns: Option<String>,
 }
 
-/// Parameter specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterSpec {
     pub name: String,
@@ -63,15 +64,13 @@ pub struct ParameterSpec {
     pub default_value: Option<serde_json::Value>,
 }
 
-/// Tool definition for function calling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
     pub description: String,
-    pub parameters: serde_json::Value, // JSON Schema
+    pub parameters: serde_json::Value,
 }
 
-/// Tool call from agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
@@ -79,7 +78,6 @@ pub struct ToolCall {
     pub arguments: serde_json::Value,
 }
 
-/// Tool call result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_call_id: String,
