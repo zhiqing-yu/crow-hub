@@ -517,6 +517,10 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
     let mut last_tick = std::time::Instant::now();
     let mut last_key_time = std::time::Instant::now();
 
+    // Force a clear before first draw — some terminals delay
+    // alternate-screen activation by one frame.
+    terminal.clear()?;
+
     loop {
         terminal.draw(|f| ui(f, app))?;
 
@@ -832,17 +836,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     );
 
     // 1b. Agent List — each row shows:
-    //   `[✓]` / `[ ]`           (multi-select checkbox — visible only when
-    //                            ANY agent is multi-selected; otherwise the
-    //                            checkbox column collapses to keep clean
-    //                            rendering for the common single-agent case)
-    //   colored status glyph   (●/◐/✗/○ from render_activity)
+    //   status glyph (●/◐/✗/○) OR ✓ when multi-selected
     //   agent name
     //   suffix (latency / elapsed / err)
-    //
-    // We query `runtime.activity_of` on every tick so Thinking-state
-    // elapsed counters animate live.
-    let any_multi = !app.multi_selected.is_empty();
     let items: Vec<ListItem> = app
         .agents
         .iter()
@@ -855,22 +851,11 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             let selected = i == app.selected_agent;
             let multi = app.multi_selected.contains(&i);
 
-            // Multi-select column.  Only render when at least one agent is
-            // multi-selected, so the single-agent default view stays compact.
-            let multi_box: Option<Span> = if any_multi {
-                if multi {
-                    Some(Span::styled(
-                        "[✓] ",
-                        Style::default().fg(app.theme.agent_multi),
-                    ))
-                } else {
-                    Some(Span::styled(
-                        "[ ] ",
-                        Style::default().fg(app.theme.agent_multi_dim),
-                    ))
-                }
+            // Multi-selected: swap glyph to ✓ (no `[✓]` wrapper)
+            let (display_glyph, display_color) = if multi {
+                ("✓", app.theme.agent_multi)
             } else {
-                None
+                (glyph, glyph_color)
             };
 
             let mut name_style = Style::default();
@@ -883,11 +868,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             }
 
             let mut spans = Vec::new();
-            if let Some(box_span) = multi_box {
-                spans.push(box_span);
-            }
-            spans.push(Span::styled(glyph, Style::default().fg(glyph_color)));
-            // Suffix before name — always visible, name truncates instead
+            spans.push(Span::styled(display_glyph, Style::default().fg(display_color)));
             if !suffix.is_empty() {
                 spans.push(Span::styled(
                     format!("{} ", suffix),
@@ -962,98 +943,199 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
 
-    if app.active_tab == Tab::Memory {
-        // ── Memory Panel ────────────────────────────────────────
-        let mut mem_block = Block::default().borders(Borders::ALL).title(format!(
-            "Memory  (last {}, ↑↓:scroll)",
-            app.memory_rows.len()
-        ));
-        if app.active_tab == Tab::Memory {
-            mem_block = mem_block.border_style(Style::default().fg(app.theme.border_focused));
-        }
+    match app.active_tab {
+        Tab::Memory => {
+            // ── Memory Panel ────────────────────────────────────────
+            let mem_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(
+                    "Memory  (last {}, ↑↓:scroll)",
+                    app.memory_rows.len()
+                ))
+                .border_style(Style::default().fg(app.theme.border_focused));
 
-        let mem_items: Vec<ListItem> = app
-            .memory_rows
-            .iter()
-            .rev() // newest at bottom
-            .skip(app.memory_scroll_offset)
-            .take(height)
-            .map(|entry| {
-                let glyph = match entry.memory_type.as_str() {
-                    "taskrequest" => "→",
-                    "taskresponse" => "←",
-                    _ => "·",
+            let mem_items: Vec<ListItem> = app
+                .memory_rows
+                .iter()
+                .rev()
+                .skip(app.memory_scroll_offset)
+                .take(height)
+                .map(|entry| {
+                    let glyph = match entry.memory_type.as_str() {
+                        "taskrequest" => "→",
+                        "taskresponse" => "←",
+                        _ => "·",
+                    };
+                    let from = entry
+                        .metadata
+                        .get("from_agent_name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            let id = entry.agent_id.to_string();
+                            if id.len() >= 8 {
+                                id[..8].to_string()
+                            } else {
+                                id
+                            }
+                        });
+                    let ts = entry.created_at.format("%m-%d %H:%M");
+                    let content = entry.content.replace('\n', " ").replace('\r', " ");
+                    let line = format!("{} {} {:>8}  {}", glyph, ts, from, content);
+                    ListItem::new(Line::from(Span::raw(line)))
+                })
+                .collect();
+
+            let mem_list = List::new(mem_items).block(mem_block);
+            f.render_widget(mem_list, right_chunks[0]);
+        }
+        Tab::Monitor => {
+            // ── Monitor Panel — detailed per-agent dashboard ────────
+            let monitor_block = Block::default()
+                .borders(Borders::ALL)
+                .title("Monitor — Agent Activity")
+                .border_style(Style::default().fg(app.theme.border_focused));
+
+            let monitor_inner = monitor_block.inner(right_chunks[0]);
+            f.render_widget(monitor_block, right_chunks[0]);
+
+            let mut rows: Vec<ListItem> = Vec::new();
+            // Header
+            rows.push(ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{:<22} {:>6} {:>8} {:>10} {:>10} {:>8}",
+                        "Agent", "Status", "Latency", "Tok In", "Tok Out", "Cost"),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+                ),
+            ])));
+            rows.push(ListItem::new(Line::from(Span::styled(
+                "─".repeat(monitor_inner.width as usize),
+                Style::default().fg(Color::DarkGray),
+            ))));
+
+            for a in &app.agents {
+                let activity = app.runtime.activity_of(&a.name);
+                let (glyph, glyph_color, _suffix) =
+                    render_activity(&activity, app.tick_count, &app.theme);
+
+                let (status_label, latency, tok_in, tok_out, cost) = match &activity {
+                    AgentActivity::Unknown => (
+                        "new", "—".into(), "—".into(), "—".into(), "—".into(),
+                    ),
+                    AgentActivity::Idle {
+                        last_latency_ms,
+                        cumulative_tokens_in,
+                        cumulative_tokens_out,
+                        cumulative_cost_usd,
+                    } => (
+                        "ready",
+                        last_latency_ms.map(format_latency).unwrap_or_else(|| "—".into()),
+                        if *cumulative_tokens_in > 0 { format_tokens(*cumulative_tokens_in) } else { "—".into() },
+                        if *cumulative_tokens_out > 0 { format_tokens(*cumulative_tokens_out) } else { "—".into() },
+                        if *cumulative_cost_usd > 0.0 { format!("${:.2}", cumulative_cost_usd) } else { "—".into() },
+                    ),
+                    AgentActivity::Thinking { since } => {
+                        let elapsed = (chrono::Utc::now() - *since).num_seconds().max(0);
+                        ("think", format!("{}s…", elapsed), "—".into(), "—".into(), "—".into())
+                    }
+                    AgentActivity::Errored { last_error } => {
+                        let err_short: String = last_error.chars().take(30).collect();
+                        ("error", err_short, "—".into(), "—".into(), "—".into())
+                    }
                 };
-                let from = entry
-                    .metadata
-                    .get("from_agent_name")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        let id = entry.agent_id.to_string();
-                        if id.len() >= 8 {
-                            id[..8].to_string()
-                        } else {
-                            id
-                        }
-                    });
-                let ts = entry.created_at.format("%m-%d %H:%M");
-                let content = entry.content.replace('\n', " ").replace('\r', " ");
-                let line = format!("{} {} {:>8}  {}", glyph, ts, from, content);
-                ListItem::new(Line::from(Span::raw(line)))
-            })
-            .collect();
 
-        let mem_list = List::new(mem_items).block(mem_block);
-        f.render_widget(mem_list, right_chunks[0]);
-    } else {
-        // ── Chat Panel ──────────────────────────────────────────
-        // Scoped view: when a single agent is selected (no multi),
-        // only show messages from that agent + user messages.
-        let scope_agent = if app.chat_scope_all || !app.multi_selected.is_empty() {
-            None
-        } else if !app.agents.is_empty() {
-            app.agents.get(app.selected_agent).map(|a| a.name.as_str())
-        } else {
-            None
-        };
+                let multi = app.multi_selected.contains(
+                    &app.agents.iter().position(|x| x.name == a.name).unwrap_or(usize::MAX),
+                );
+                let name_color = if multi {
+                    app.theme.agent_multi
+                } else {
+                    Color::White
+                };
 
-        let mut all_lines: Vec<String> = Vec::new();
-        for m in &app.messages {
-            // Scope filter: in single-agent scope, show only that agent's
-            // messages + the user's.  Always pass-through handoff lines
-            // (prefix `⇄`) because they're cross-agent coordination and
-            // belong in every view.
-            let show = match scope_agent {
-                Some(name) => {
-                    m.starts_with("You:")
-                        || m.starts_with("⇄")
-                        || m.starts_with("📋")
-                        || m.starts_with(&format!("{}:", name))
+                rows.push(ListItem::new(Line::from(vec![
+                    Span::styled(glyph, Style::default().fg(glyph_color)),
+                    Span::styled(
+                        format!("{:<21}", a.name),
+                        Style::default().fg(name_color),
+                    ),
+                    Span::styled(
+                        format!(" {:>6}", status_label),
+                        Style::default().fg(glyph_color),
+                    ),
+                    Span::styled(
+                        format!(" {:>8}", latency),
+                        Style::default().fg(app.theme.suffix),
+                    ),
+                    Span::styled(
+                        format!(" {:>10}", tok_in),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!(" {:>10}", tok_out),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!(" {:>8}", cost),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ])));
+
+                // Second line: model + driver info
+                if let Some(ref model) = a.default_model {
+                    rows.push(ListItem::new(Line::from(Span::styled(
+                        format!("  └ model: {}", model),
+                        Style::default().fg(Color::DarkGray),
+                    ))));
                 }
-                None => true,
-            };
-            if show {
-                let wrapped = wrap_text(m, width);
-                all_lines.extend(wrapped);
             }
+
+            let monitor_list = List::new(rows);
+            f.render_widget(monitor_list, monitor_inner);
         }
+        _ => {
+            // ── Chat Panel (Agents + Chat tabs) ─────────────────────
+            let scope_agent = if app.chat_scope_all || !app.multi_selected.is_empty() {
+                None
+            } else if !app.agents.is_empty() {
+                app.agents.get(app.selected_agent).map(|a| a.name.as_str())
+            } else {
+                None
+            };
 
-        let max_scroll = all_lines.len().saturating_sub(height);
-        let current_scroll = max_scroll.saturating_sub(app.chat_scroll_offset);
-        let visible_lines = &all_lines
-            [current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
+            let mut all_lines: Vec<String> = Vec::new();
+            for m in &app.messages {
+                let show = match scope_agent {
+                    Some(name) => {
+                        m.starts_with("You:")
+                            || m.starts_with("⇄")
+                            || m.starts_with("📋")
+                            || m.starts_with(&format!("{}:", name))
+                    }
+                    None => true,
+                };
+                if show {
+                    let wrapped = wrap_text(m, width);
+                    all_lines.extend(wrapped);
+                }
+            }
 
-        let messages_items: Vec<ListItem> = visible_lines
-            .iter()
-            .map(|m| {
-                let content = vec![Line::from(Span::raw(m))];
-                ListItem::new(content)
-            })
-            .collect();
+            let max_scroll = all_lines.len().saturating_sub(height);
+            let current_scroll = max_scroll.saturating_sub(app.chat_scroll_offset);
+            let visible_lines = &all_lines
+                [current_scroll..current_scroll + height.min(all_lines.len() - current_scroll)];
 
-        let messages_list = List::new(messages_items).block(messages_block);
-        f.render_widget(messages_list, right_chunks[0]);
+            let messages_items: Vec<ListItem> = visible_lines
+                .iter()
+                .map(|m| {
+                    let content = vec![Line::from(Span::raw(m))];
+                    ListItem::new(content)
+                })
+                .collect();
+
+            let messages_list = List::new(messages_items).block(messages_block);
+            f.render_widget(messages_list, right_chunks[0]);
+        }
     }
 
     // 3. Input Panel
