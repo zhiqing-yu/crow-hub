@@ -97,6 +97,7 @@ pub struct App {
     pub active_tab: Tab,
     /// /all forces global view even when single agent selected
     pub chat_scope_all: bool,
+    pub show_help_overlay: bool,
 }
 
 impl App {
@@ -134,6 +135,7 @@ impl App {
             default_model: String::new(),
             active_tab: Tab::Chat,
             chat_scope_all: false,
+            show_help_overlay: false,
         }
     }
 
@@ -594,6 +596,12 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
                         {
                             app.should_quit = true;
+                        }
+                        KeyCode::Char('?') if app.focused_panel != FocusedPanel::Input => {
+                            app.show_help_overlay = !app.show_help_overlay;
+                        }
+                        KeyCode::Esc if app.show_help_overlay => {
+                            app.show_help_overlay = false;
                         }
                         KeyCode::Esc => app.should_quit = true,
                         KeyCode::Tab => {
@@ -1232,6 +1240,38 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     let target = if app.multi_selected.is_empty() { app.agents.get(app.selected_agent).map(|a| format!("You → {}", a.name)).unwrap_or_default() } else { format!("You → [{}]", app.multi_selected.len()) };
     f.render_widget(Paragraph::new(target).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)).alignment(ratatui::layout::Alignment::Center), footer_chunks[1]);
     f.render_widget(Paragraph::new(format!("v{}", env!("CARGO_PKG_VERSION"))).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)).alignment(ratatui::layout::Alignment::Right), footer_chunks[2]);
+
+    // ── Help overlay (floats above everything) ───────────────────
+    if app.show_help_overlay {
+        let area = centered_rect(60, 60, f.size());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(app.theme.accent_primary))
+            .title(" Help — ? or Esc to close ")
+            .style(Style::default().bg(app.theme.overlay_bg));
+        let ver = format!("  v{}", env!("CARGO_PKG_VERSION"));
+        let lines: Vec<Line> = [
+            "",
+            "Keyboard",
+            "  Tab         Switch tab (Home → Chat → Monitor → Memory)",
+            "  ↑↓          Navigate agents / scroll chat / scroll memory",
+            "  Space       Multi-select agent (Home tab)",
+            "  Enter       Send message",
+            "  Backspace   Clear multi-selection (Home tab)",
+            "  Ctrl+C      Quit",
+            "",
+            "Slash Commands",
+            "  /clear                Clear chat history",
+            "  /model <name>         Override model for next messages",
+            "  /all                  Show all agents in chat",
+            "  /evidence claim|verify|fail ...",
+            "  /help                 Show this help",
+            "  ?                     Open this overlay",
+            "",
+            &ver,
+        ].iter().map(|s| Line::from(*s)).collect();
+        f.render_widget(Paragraph::new(lines).block(block).style(Style::default().fg(app.theme.summary)), area);
+    }
 }
 
 /// Map an `AgentActivity` to (glyph, color, suffix) for the agent list.
@@ -1363,6 +1403,14 @@ fn format_tokens(n: u64) -> String {
     } else {
         format!("{}k", n / 1000)
     }
+}
+
+fn centered_rect(pct_x: u16, pct_y: u16, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    let w = area.width * pct_x / 100;
+    let h = area.height * pct_y / 100;
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    ratatui::layout::Rect::new(x, y, w, h)
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
