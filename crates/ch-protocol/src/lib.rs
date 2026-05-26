@@ -84,6 +84,7 @@ pub enum MessageType {
     Evidence,
     /// Verifier flips an existing evidence row to `verified` or `failed`.
     /// Maestro Task 2.
+    WorkflowClaim,
     EvidenceVerify,
     /// Custom message type
     Custom(String),
@@ -226,6 +227,7 @@ pub enum Payload {
     /// Verifier flips a previously-emitted evidence row to verified or
     /// failed.  Maestro Task 2.
     EvidenceVerify(EvidenceVerifyMsg),
+    WorkflowClaim(WorkflowClaimMsg),
     /// Empty payload
     Empty,
 }
@@ -633,4 +635,11 @@ mod tests {
         assert_eq!(back.claim, "c");
         assert!(back.witness.is_none());
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkflowClaimMsg {
+    pub step_id: String,
+    pub workflow_id: String,
+    pub agent_id: String,
 }

@@ -1,0 +1,3 @@
+# Normalize line endings to LF for all text files.
+# Prevents CRLF/LF noise commits like b883f5e.
+* text=auto eol=lf
