@@ -739,3 +739,18 @@ impl WorkflowStore for SqliteMemoryStore {
         Ok(vec![])
     }
 }
+
+use crate::{WorkflowStepRow, WorkflowStore};
+use ch_protocol::WorkflowStepState;
+
+#[async_trait]
+impl WorkflowStore for SqliteMemoryStore {
+    async fn claim_step(&self, wf: &str, step: &str, agent: &str) -> Result<()> {
+        sqlx::query("INSERT INTO workflow_steps (step_id, workflow_id, state, claimed_by, claimed_at) VALUES (?1, ?2, 'claimed', ?3, datetime('now')) ON CONFLICT(step_id) DO UPDATE SET state='claimed', claimed_by=excluded.claimed_by, claimed_at=datetime('now')")
+            .bind(step).bind(wf).bind(agent)
+            .execute(&self.pool).await.map_err(|e| MemoryError::Backend(e.to_string()))?;
+        Ok(())
+    }
+    async fn by_workflow(&self, _wf: &str) -> Result<Vec<WorkflowStepRow>> { Ok(vec![]) }
+    async fn pending_steps(&self, _n: usize) -> Result<Vec<WorkflowStepRow>> { Ok(vec![]) }
+}
