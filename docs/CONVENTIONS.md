@@ -26,6 +26,7 @@ merged version that captures consensus.
 docs/
 ├── CONVENTIONS.md           (this file)
 ├── DESIGN_SYSTEM.md         (singleton specs stay at the top)
+├── DEBUGGING_RULES.md       (singleton — accumulated lessons; §11)
 │
 ├── brainstorms/
 │   ├── claude/              ← Claude's exploration of an idea
@@ -44,10 +45,12 @@ docs/
 │   │   └── ...
 │   └── merged/              ← consolidated cross-agent roadmap
 │
-└── journals/
-    ├── claude/              ← Claude's end-of-session recap
-    ├── deepseek/
-    └── merged/              ← daily / weekly consolidated journal
+├── journals/
+│   ├── claude/              ← Claude's end-of-session recap
+│   ├── deepseek/
+│   └── merged/              ← daily / weekly consolidated journal
+│
+└── bugs/                    ← per-bug postmortems (flat, no agent dirs; §11)
 ```
 
 **No subdirectories beyond what's listed above.**  If you find
@@ -172,8 +175,14 @@ Rules for merged docs:
 * **When**: at the end of every working session, even short ones.
   The chain breaks if anyone skips one — the next agent has to
   reconstruct context from commit messages.
-* **Required sections**: what shipped (commits + test count delta),
-  one surprise or design tension, carry-over for the next session.
+* **Required sections**:
+  - What shipped (commits + test count delta)
+  - One surprise or design tension
+  - Carry-over for the next session
+  - **Debugging-rule extract**: if any bugs were encountered today
+    (or even just rough edges), name one rule that would have
+    prevented them.  Append it to `docs/DEBUGGING_RULES.md` and
+    cross-link from the journal.  See §11 for the workflow.
 * **Lifecycle**: `active` for ~1 day, then `archived` automatically
   (no explicit transition needed).
 
@@ -230,3 +239,86 @@ The first doc that follows this convention is the migration of
 `docs/plans/for-others/for-deepseek/2026-05-29_close-workflow-loop.md`
 (landed in the same commit as this file).  See that file's header
 for the canonical example.
+
+---
+
+## 11. Bug postmortems & debugging rules
+
+Two related artifacts that together close the learning loop:
+
+### Bug postmortems — `docs/bugs/YYYY-MM-DD_short-name.md`
+
+**One file per bug.**  Flat directory (no per-agent subdirs — bugs
+don't have per-agent perspectives the way brainstorms do; the author
+is in the header).
+
+**When to write**: any time you fix a bug that took more than a
+trivial moment to diagnose, OR any time a bug recurred from a
+previous fix, OR any time the root cause wasn't obvious from the
+symptom.  Skip for typos and one-line fixes that compile on first
+try.
+
+**Required sections** (template):
+
+```markdown
+# <Bug name — YYYY-MM-DD>
+
+**Author:** <who wrote this postmortem>
+**Discovered by:** <who hit the bug — may differ from author>
+**Severity:** Compile-broken | Runtime-error | Silent-corruption | UX-only
+**Status:** Fixed in <commit-sha>
+**Related:**
+- `../journals/<author>/YYYY-MM-DD_*.md`
+- `../DEBUGGING_RULES.md#rule-N` (the rule extracted from this bug)
+
+## Symptom
+What did the observer see?
+
+## Root cause
+What was actually wrong (not just the surface symptom)?
+
+## Fix
+File paths + 1-line description per file.  Reference the commit.
+
+## Why it wasn't caught earlier
+Tests? Reviews? Tooling? Human attention?  Be honest.
+
+## Prevention
+What rule / process / tool would have prevented this?  This is the
+sentence that becomes the rule in DEBUGGING_RULES.md.
+```
+
+### Debugging rules — `docs/DEBUGGING_RULES.md` (singleton)
+
+**Accumulated lessons from bugs encountered.**  Append-only, numbered
+list.  Each rule cites the bug postmortem that originated it.
+
+**When to update**: at end of every session as part of the journal
+ritual.  If today's bugs (or rough edges) suggest a rule, add it.
+Multiple rules from one session is fine; zero rules from a smooth
+session is also fine — don't manufacture rules to feel productive.
+
+**Format** (one entry per rule):
+
+```markdown
+## Rule N: <One-line actionable statement>
+
+**Source:** `bugs/YYYY-MM-DD_short-name.md`
+**Trigger:** <when to apply this rule — what situation>
+**Action:** <what to do when the trigger fires>
+**Rationale:** <one or two sentences on why this saves time>
+```
+
+**Anti-patterns for rules**:
+- ❌ Vague advice ("be careful with X") — must have a concrete
+  trigger + action
+- ❌ Restating language features ("don't use unsafe") — rules are
+  for *this codebase's* failure modes, not generic Rust hygiene
+- ❌ Rules without a source bug — every rule traces to a real
+  incident; speculative rules go in brainstorms instead
+
+**Lifecycle**: rules are append-only.  If a rule is later
+*superseded* (e.g. tooling now catches what the rule warned about),
+mark it `~~struck-through~~` with a note pointing to the tool that
+replaced it — don't delete, because the historical record explains
+why the tool exists.
