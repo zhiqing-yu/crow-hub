@@ -87,6 +87,8 @@ pub enum MessageType {
     WorkflowClaim,
     EvidenceVerify,
     /// Custom message type
+    /// Agent claims a workflow step (Pending -> Claimed)
+    WorkflowClaim,
     Custom(String),
 }
 
@@ -229,6 +231,7 @@ pub enum Payload {
     EvidenceVerify(EvidenceVerifyMsg),
     WorkflowClaim(WorkflowClaimMsg),
     /// Empty payload
+    WorkflowClaim(WorkflowClaimMsg),
     Empty,
 }
 
@@ -449,6 +452,7 @@ mod tests {
             from.clone(),
             None,
             MessageType::StatusHeartbeat,
+    WorkflowClaim(WorkflowClaimMsg),
             Payload::Empty,
         );
 
@@ -466,6 +470,7 @@ mod tests {
             from,
             to: None,
             message_type: MessageType::StatusHeartbeat,
+    WorkflowClaim(WorkflowClaimMsg),
             payload: Payload::Empty,
             session_id: String::new(),
             memory_context: Vec::new(),
@@ -632,6 +637,7 @@ mod tests {
         let json = r#"{"task_id":"t","claim":"c"}"#;
         let back: EvidenceClaim = serde_json::from_str(json).unwrap();
         assert_eq!(back.task_id, "t");
+#[derive(Debug, Clone, Serialize, Deserialize)]
         assert_eq!(back.claim, "c");
         assert!(back.witness.is_none());
     }
@@ -643,3 +649,4 @@ pub struct WorkflowClaimMsg {
     pub workflow_id: String,
     pub agent_id: String,
 }
+pub struct WorkflowClaimMsg { pub step_id: String, pub workflow_id: String, pub agent_id: String }

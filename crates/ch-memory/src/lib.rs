@@ -424,3 +424,20 @@ mod tests {
         assert_eq!(chroma.port, 8000);
     }
 }
+
+/// A row in the workflow_steps table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStepRow {
+    pub step_id: String,
+    pub workflow_id: String,
+    pub state: WorkflowStepState,
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[async_trait]
+pub trait WorkflowStore: Send + Sync {
+    async fn claim_step(&self, workflow_id: &str, step_id: &str, agent_id: &str) -> Result<()>;
+    async fn by_workflow(&self, workflow_id: &str) -> Result<Vec<WorkflowStepRow>>;
+    async fn pending_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>>;
+}

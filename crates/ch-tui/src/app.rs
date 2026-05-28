@@ -125,6 +125,7 @@ impl App {
             response_rx,
             tx,
             focused_panel: FocusedPanel::Input,
+            cursor_pos: 0,
             chat_scroll_offset: 0,
             input_scroll_offset: 0,
             tick_count: 0,
@@ -1218,7 +1219,29 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     if app.focused_panel == FocusedPanel::Input {
         input_block = input_block.border_style(Style::default().fg(app.theme.border_focused));
     }
-    let input_par = Paragraph::new(app.input.as_str())
+    // Build input line with cursor indicator
+    let input_line = {
+        let text =     let input_par = Paragraph::new(app.input.as_str())app.input;
+        let pos = app.cursor_pos.min(text.len());
+        let mut spans: Vec<Span> = Vec::new();
+        if pos > 0 {
+            spans.push(Span::raw(    let input_par = Paragraph::new(app.input.as_str())text[..pos]));
+        }
+        if pos < text.len() {
+            spans.push(Span::styled(
+                text[pos..pos+1].to_string(),
+                Style::default().bg(app.theme.summary).fg(app.theme.surface),
+            ));
+            if pos + 1 < text.len() {
+                spans.push(Span::raw(    let input_par = Paragraph::new(app.input.as_str())text[pos+1..]));
+            }
+        } else if app.tick_count % 2 == 0 {
+            // Blinking cursor at end of input
+            spans.push(Span::styled(" ", Style::default().bg(app.theme.summary)));
+        }
+        Line::from(spans)
+    };
+    let input_par = Paragraph::new(input_line)
         .block(input_block)
         .wrap(ratatui::widgets::Wrap { trim: false })
         .scroll((app.input_scroll_offset as u16, 0));
