@@ -88,7 +88,6 @@ pub enum MessageType {
     EvidenceVerify,
     /// Custom message type
     /// Agent claims a workflow step (Pending -> Claimed)
-    WorkflowClaim,
     Custom(String),
 }
 
@@ -231,7 +230,6 @@ pub enum Payload {
     EvidenceVerify(EvidenceVerifyMsg),
     WorkflowClaim(WorkflowClaimMsg),
     /// Empty payload
-    WorkflowClaim(WorkflowClaimMsg),
     Empty,
 }
 
@@ -452,7 +450,6 @@ mod tests {
             from.clone(),
             None,
             MessageType::StatusHeartbeat,
-    WorkflowClaim(WorkflowClaimMsg),
             Payload::Empty,
         );
 
@@ -470,7 +467,6 @@ mod tests {
             from,
             to: None,
             message_type: MessageType::StatusHeartbeat,
-    WorkflowClaim(WorkflowClaimMsg),
             payload: Payload::Empty,
             session_id: String::new(),
             memory_context: Vec::new(),
@@ -643,10 +639,9 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowClaimMsg {
     pub step_id: String,
     pub workflow_id: String,
     pub agent_id: String,
 }
-pub struct WorkflowClaimMsg { pub step_id: String, pub workflow_id: String, pub agent_id: String }
