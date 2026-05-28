@@ -67,6 +67,7 @@ pub struct App {
     pub user_agent_id: AgentId,
     pub agents: Vec<AgentInfo>,
     pub input: String,
+    pub cursor_pos: usize,
     pub messages: Vec<String>,
     pub selected_agent: usize,
     /// Indices (into `agents`) of agents the user has multi-selected via
