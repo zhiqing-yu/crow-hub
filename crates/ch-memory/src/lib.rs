@@ -442,5 +442,3 @@ pub trait WorkflowStore: Send + Sync {
     async fn pending_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>>;
 }
 
-// Workflow step row — Maestro Task 3
-#[derive(Debug, Clone, Serialize, Deserialize)]
