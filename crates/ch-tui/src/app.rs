@@ -851,7 +851,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
-                Span::styled(format!(" {} ", label), Style::default().fg(app.theme.tab_inactive))
+                Span::styled(
+                    format!(" {} ", label),
+                    Style::default().fg(app.theme.tab_inactive),
+                )
             }
         })
         .collect();
@@ -864,7 +867,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     if pad > 0 {
         final_spans.push(Span::raw(" ".repeat(pad)));
     }
-    final_spans.push(Span::styled(version, Style::default().fg(app.theme.agent_meta)));
+    final_spans.push(Span::styled(
+        version,
+        Style::default().fg(app.theme.agent_meta),
+    ));
     f.render_widget(
         Paragraph::new(Line::from(final_spans)).style(Style::default().bg(app.theme.surface)),
         tab_area,
@@ -1221,19 +1227,19 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     }
     // Build input line with cursor indicator
     let input_line = {
-        let text =     let input_par = Paragraph::new(app.input.as_str())app.input;
+        let text = app.input.as_str();
         let pos = app.cursor_pos.min(text.len());
         let mut spans: Vec<Span> = Vec::new();
         if pos > 0 {
-            spans.push(Span::raw(    let input_par = Paragraph::new(app.input.as_str())text[..pos]));
+            spans.push(Span::raw(text[..pos].to_string()));
         }
         if pos < text.len() {
             spans.push(Span::styled(
-                text[pos..pos+1].to_string(),
+                text[pos..pos + 1].to_string(),
                 Style::default().bg(app.theme.summary).fg(app.theme.surface),
             ));
             if pos + 1 < text.len() {
-                spans.push(Span::raw(    let input_par = Paragraph::new(app.input.as_str())text[pos+1..]));
+                spans.push(Span::raw(text[pos + 1..].to_string()));
             }
         } else if app.tick_count % 2 == 0 {
             // Blinking cursor at end of input
@@ -1258,12 +1264,40 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     };
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)].as_ref())
+        .constraints(
+            [
+                Constraint::Percentage(50),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ]
+            .as_ref(),
+        )
         .split(footer_area);
-    f.render_widget(Paragraph::new(shortcuts).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)), footer_chunks[0]);
-    let target = if app.multi_selected.is_empty() { app.agents.get(app.selected_agent).map(|a| format!("You → {}", a.name)).unwrap_or_default() } else { format!("You → [{}]", app.multi_selected.len()) };
-    f.render_widget(Paragraph::new(target).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)).alignment(ratatui::layout::Alignment::Center), footer_chunks[1]);
-    f.render_widget(Paragraph::new(format!("v{}", env!("CARGO_PKG_VERSION"))).style(Style::default().fg(app.theme.footer).bg(app.theme.surface)).alignment(ratatui::layout::Alignment::Right), footer_chunks[2]);
+    f.render_widget(
+        Paragraph::new(shortcuts)
+            .style(Style::default().fg(app.theme.footer).bg(app.theme.surface)),
+        footer_chunks[0],
+    );
+    let target = if app.multi_selected.is_empty() {
+        app.agents
+            .get(app.selected_agent)
+            .map(|a| format!("You → {}", a.name))
+            .unwrap_or_default()
+    } else {
+        format!("You → [{}]", app.multi_selected.len())
+    };
+    f.render_widget(
+        Paragraph::new(target)
+            .style(Style::default().fg(app.theme.footer).bg(app.theme.surface))
+            .alignment(ratatui::layout::Alignment::Center),
+        footer_chunks[1],
+    );
+    f.render_widget(
+        Paragraph::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+            .style(Style::default().fg(app.theme.footer).bg(app.theme.surface))
+            .alignment(ratatui::layout::Alignment::Right),
+        footer_chunks[2],
+    );
 
     // ── Help overlay (floats above everything) ───────────────────
     if app.show_help_overlay {
@@ -1293,8 +1327,16 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             "  ?                     Open this overlay",
             "",
             &ver,
-        ].iter().map(|s| Line::from(*s)).collect();
-        f.render_widget(Paragraph::new(lines).block(block).style(Style::default().fg(app.theme.summary)), area);
+        ]
+        .iter()
+        .map(|s| Line::from(*s))
+        .collect();
+        f.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .style(Style::default().fg(app.theme.summary)),
+            area,
+        );
     }
 }
 

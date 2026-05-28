@@ -84,10 +84,10 @@ pub enum MessageType {
     Evidence,
     /// Verifier flips an existing evidence row to `verified` or `failed`.
     /// Maestro Task 2.
-    WorkflowClaim,
     EvidenceVerify,
+    /// Agent claims a workflow step (Pending -> Claimed).  Maestro Task 3.
+    WorkflowClaim,
     /// Custom message type
-    /// Agent claims a workflow step (Pending -> Claimed)
     Custom(String),
 }
 
@@ -633,7 +633,6 @@ mod tests {
         let json = r#"{"task_id":"t","claim":"c"}"#;
         let back: EvidenceClaim = serde_json::from_str(json).unwrap();
         assert_eq!(back.task_id, "t");
-#[derive(Debug, Clone, Serialize, Deserialize)]
         assert_eq!(back.claim, "c");
         assert!(back.witness.is_none());
     }

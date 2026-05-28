@@ -1,10 +1,11 @@
 use crate::{
     EvidenceRow, EvidenceStatus, EvidenceStore, ExportFormat, ImportResult, MemoryError,
-    MemoryFilter, MemoryStore, Result, SqliteConfig,
+    MemoryFilter, MemoryStore, Result, SqliteConfig, WorkflowStepRow, WorkflowStore,
 };
 use async_trait::async_trait;
 use ch_protocol::AgentId;
 use ch_protocol::MemoryEntry;
+use ch_protocol::WorkflowStepState;
 use chrono::{DateTime, Utc};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -128,6 +129,16 @@ impl MemoryStore for SqliteMemoryStore {
         CREATE INDEX IF NOT EXISTS idx_evidence_task_id ON evidence(task_id);
         CREATE INDEX IF NOT EXISTS idx_evidence_correlation ON evidence(correlation_id);
         CREATE INDEX IF NOT EXISTS idx_evidence_status ON evidence(status);
+
+        CREATE TABLE IF NOT EXISTS workflow_steps (
+            step_id      TEXT PRIMARY KEY,
+            workflow_id  TEXT NOT NULL,
+            state        TEXT NOT NULL DEFAULT 'pending',
+            claimed_by   TEXT,
+            claimed_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow_id ON workflow_steps(workflow_id);
+        CREATE INDEX IF NOT EXISTS idx_workflow_steps_state ON workflow_steps(state);
         ";
         sqlx::query(schema)
             .execute(&self.pool)
@@ -699,19 +710,93 @@ mod tests {
     }
 }
 
-#[async_trait]
-
-use crate::{WorkflowStepRow, WorkflowStore};
-use ch_protocol::WorkflowStepState;
+// ── WorkflowStore impl (Maestro Task 3) ────────────────────────────────────
+//
+// Single source of truth — earlier in this file there were TWO `impl
+// WorkflowStore for SqliteMemoryStore` blocks left over from sed-driven
+// scaffolding.  Removed the stub second copy, kept the real implementation
+// here.  See `claimed_at` TODO below — SQLite's `datetime('now')` returns
+// `YYYY-MM-DD HH:MM:SS` (not RFC3339); we tolerate the parse failure by
+// returning epoch via `unwrap_or_default()` until we switch to INTEGER
+// timestamps to match `messages` / `evidence`.
 
 #[async_trait]
 impl WorkflowStore for SqliteMemoryStore {
-    async fn claim_step(&self, wf: &str, sid: &str, agent: &str) -> Result<()> {
-        sqlx::query("INSERT INTO workflow_steps (step_id, workflow_id, state, claimed_by, claimed_at) VALUES (?1, ?2, ?3, ?4, datetime(?5)) ON CONFLICT(step_id) DO UPDATE SET state=excluded.state, claimed_by=excluded.claimed_by, claimed_at=excluded.claimed_at")
-            .bind(sid).bind(wf).bind("claimed").bind(agent).bind("now")
-            .execute(&self.pool).await.map_err(|e| MemoryError::Backend(e.to_string()))?;
+    async fn claim_step(&self, workflow_id: &str, step_id: &str, agent_id: &str) -> Result<()> {
+        // ON CONFLICT uses `excluded.claimed_by` so the parameter only needs
+        // to be bound once (idiomatic SQLite upsert).
+        sqlx::query(
+            "INSERT INTO workflow_steps (step_id, workflow_id, state, claimed_by, claimed_at) \
+             VALUES (?, ?, 'claimed', ?, datetime('now')) \
+             ON CONFLICT(step_id) DO UPDATE SET \
+                 state = 'claimed', \
+                 claimed_by = excluded.claimed_by, \
+                 claimed_at = datetime('now')",
+        )
+        .bind(step_id)
+        .bind(workflow_id)
+        .bind(agent_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| MemoryError::Backend(e.to_string()))?;
         Ok(())
     }
-    async fn by_workflow(&self, _wf: &str) -> Result<Vec<WorkflowStepRow>> { Ok(vec![]) }
-    async fn pending_steps(&self, _n: usize) -> Result<Vec<WorkflowStepRow>> { Ok(vec![]) }
+
+    async fn by_workflow(&self, workflow_id: &str) -> Result<Vec<WorkflowStepRow>> {
+        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
+            "SELECT step_id, workflow_id, state, claimed_by, claimed_at \
+             FROM workflow_steps WHERE workflow_id = ?",
+        )
+        .bind(workflow_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| MemoryError::Backend(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(sid, wid, st, cb, ca)| WorkflowStepRow {
+                step_id: sid,
+                workflow_id: wid,
+                state: match st.as_str() {
+                    "claimed" => WorkflowStepState::Claimed,
+                    _ => WorkflowStepState::Pending,
+                },
+                claimed_by: cb,
+                // TODO: schema stores claimed_at via `datetime('now')` which
+                // is YYYY-MM-DD HH:MM:SS, not RFC3339.  parse_from_rfc3339
+                // will fail and unwrap_or_default() yields epoch zero.
+                // Switch the column to INTEGER (unix ts) to match
+                // `messages.created_at` / `evidence.created_at` for
+                // consistency.
+                claimed_at: ca.map(|s| {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc)
+                }),
+            })
+            .collect())
+    }
+
+    async fn pending_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>> {
+        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
+            "SELECT step_id, workflow_id, state, claimed_by, claimed_at \
+             FROM workflow_steps WHERE state = 'pending' LIMIT ?",
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| MemoryError::Backend(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(sid, wid, _st, cb, _ca)| WorkflowStepRow {
+                step_id: sid,
+                workflow_id: wid,
+                state: WorkflowStepState::Pending,
+                claimed_by: cb,
+                // Pending steps haven't been claimed; claimed_at is NULL.
+                claimed_at: None,
+            })
+            .collect())
+    }
 }

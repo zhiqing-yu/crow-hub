@@ -29,9 +29,17 @@ pub struct Workflow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WorkflowStepState { Pending, Claimed, InProgress, Done, Failed }
+pub enum WorkflowStepState {
+    Pending,
+    Claimed,
+    InProgress,
+    Done,
+    Failed,
+}
 
-fn default_state() -> WorkflowStepState { WorkflowStepState::Pending }
+fn default_state() -> WorkflowStepState {
+    WorkflowStepState::Pending
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStep {

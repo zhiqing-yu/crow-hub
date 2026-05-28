@@ -425,12 +425,24 @@ mod tests {
     }
 }
 
-/// A row in the workflow_steps table.
+// ─── Workflow steps (Maestro Task 3) ────────────────────────────────────────
+//
+// Storage for the workflow step lifecycle.  Companion to the bus protocol
+// types in `ch_protocol` (`WorkflowStepState`, `WorkflowClaimMsg`).  Steps
+// transition `Pending → Claimed` on a `claim_step` call (the only transition
+// wired in slice 1 — others land in subsequent narrow PRs per the brainstorm
+// at docs/journals/2026-05-26_workflow_design_brainstorm.md).
+//
+// Sed-driven scaffolding earlier in this session left TWO copies of the
+// struct + trait here; this is the surviving one, using the fully-qualified
+// `ch_protocol::WorkflowStepState` so we don't need to update the file's
+// import block.
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStepRow {
     pub step_id: String,
     pub workflow_id: String,
-    pub state: WorkflowStepState,
+    pub state: ch_protocol::WorkflowStepState,
     pub claimed_by: Option<String>,
     pub claimed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -441,4 +453,3 @@ pub trait WorkflowStore: Send + Sync {
     async fn by_workflow(&self, workflow_id: &str) -> Result<Vec<WorkflowStepRow>>;
     async fn pending_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>>;
 }
-
