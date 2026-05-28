@@ -1,35 +1,61 @@
-# Day Plan for DeepSeek — 2026-05-29
+# Close the workflow loop — for DeepSeek, 2026-05-29
 
-> **Audience**: DeepSeek (or any next coding agent).  Self-contained —
-> no prior conversation context needed.
->
+**Author:** Claude
+**Audience:** DeepSeek
+**Status:** active
+**Related:**
+- `../../../journals/2026-05-28_development_journal.md` (yesterday's recap; pre-conventions location)
+- `../../../journals/2026-05-26_workflow_design_brainstorm.md` (origin of the workflow design; pre-conventions location)
+- `../../../DESIGN_SYSTEM.md` §11 (overlay/modal spec; relevant for Task 6)
+
 > **Theme of the day: close the workflow loop end-to-end before
 > starting anything new.**  Storage layer landed yesterday; UI side
 > didn't.  Same shape as rich-text-input two days ago (movement
 > worked, indicator missing).  Pattern is recurring.  Fix it.
+>
+> **This is the first plan that follows `docs/CONVENTIONS.md`** —
+> located under `plans/for-others/for-deepseek/` to make audience
+> explicit.  Header block above replaces the old "Audience:" inline
+> note.
 
 ---
 
 ## Where we are
 
-You shipped Workflow Task 3's storage layer yesterday:
+You shipped Workflow Task 3's storage layer in the prior session, but
+sed-driven scaffolding left several files non-compiling.  Claude
+landed a rescue commit (`45a7ee5`) that:
+- Stripped an `sqlx::query(...)` injection from inside the SQL schema
+  string literal in `ch-memory/src/backends/sqlite.rs`
+- Removed duplicate `impl WorkflowStore` block + duplicate
+  `WorkflowStepRow + WorkflowStore` definitions in
+  `ch-memory/src/lib.rs`
+- Fixed three `\r`-corrupted lines in the input-rendering block of
+  `ch-tui/src/app.rs`
+- **Restored proper doc comments on `MessageType` variants and
+  re-ordered so Evidence/EvidenceVerify stay paired.  Task 1 below
+  is therefore already DONE — skip it.**
+- Removed a stray `#[derive(...)]` injected into a test in
+  `ch-protocol/src/lib.rs`
+
+Recent commits (newest first):
 
 ```
-da99064 fix: clean up protocol duplicates + add workflow storage/writer
-94a6ffa feat(workflow): Pending->Claimed transition — full vertical slice
-bc542ed refactor(tui): complete Theme token migration — zero bare Color::* in app.rs
-8a4bf46 chore: cargo fmt --all
-da801e3 feat(tui): ? modal overlay + workflow design brainstorm
+45a7ee5 fix: rescue compile after sed-driven scaffolding damage   ← Claude
+cae84f9 fix: remove dangling #[derive] after struct deletion       ← DeepSeek (in-flight)
+e562d17 fix(ch-memory): remove duplicate WorkflowStepRow + WorkflowStore
+9d74c7c fix(sqlite): truncate corrupt code, append single clean WorkflowStore impl
+8328368 fix(sqlite): proper SQL escaping in workflow_steps + WorkflowStore impl
+12aee0e docs(plan): day plan for DeepSeek — 2026-05-26 (this plan, original location)
 ```
 
 **State:**
-- Workflow storage exists (`WorkflowClaimMsg`, `WorkflowStepRow`,
-  `WorkflowStore` trait, SQLite impl, writer dispatch).
+- Workflow storage exists and **compiles** (post-rescue).
 - Workflow **UI surface does not exist** — nothing visible to the user.
 - 121 lib + 25 ch-tui binary = **146 tests green**.
 - Cursor indicator landed (rich text input is now end-to-end).
 - ? modal landed.
-- Local `main` is 5 commits ahead of `origin/main`.
+- `main` is in sync with `origin/main`.
 
 **The half-shipped pattern.**  Twice in the last week you've shipped
 the engineering side of a feature and left the user-facing surface
@@ -56,7 +82,7 @@ a future cleanup PR + a confused user.
 
 | # | Task | Effort | Why |
 |---|------|-------:|-----|
-| 1 | Protocol doc-comment cleanup in `MessageType` | ~5 min | Sed runs left WorkflowClaim wearing EvidenceVerify's doc + Custom wearing WorkflowClaim's doc.  Readability fix. |
+| ~~1~~ | ~~Protocol doc-comment cleanup in `MessageType`~~ | ~~~5 min~~ | **DONE** in `45a7ee5` (rescue commit) |
 | 2 | Workflow storage tests | ~20 min | Yesterday promised ~6 tests; none landed.  Schema round-trip, claim transition, NotFound, by_workflow ordering. |
 | 3 | `/workflow claim <step_id>` slash command | ~45 min | Closes the loop end-to-end.  Proves the data path without a new tab. |
 | 4 | TUI surface decision-check (no code) | ~10 min | Re-read your brainstorm; confirm Tab vs overlay choice; **decide before building**.  Avoids building both. |
@@ -74,15 +100,13 @@ for 1-5**, **~3 hr including stretch Task 6**.
 cd <repo>
 git fetch origin
 git checkout main
-git pull origin main                  # noop if you've already pushed
-git push origin main                  # 5 local commits ahead; push them
+git pull origin main                  # main is in sync as of 45a7ee5
 git status                            # must be clean
 cargo test --workspace --lib          # 121 passing
 cargo test -p ch-tui --bin crow       # 25 passing
 ```
 
-If push fails because someone else pushed in the meantime, `git pull
---rebase` and try again.  Stop and report if tests fail.
+Stop and report if tests fail.
 
 **Quick sanity grep** (per yesterday's flag about cursor_pos):
 
@@ -95,47 +119,11 @@ If you get more than 2 hits, there's a duplicate init to remove.
 
 ---
 
-## Task 1 — Protocol doc-comment cleanup (~5 min)
+## Task 1 — Protocol doc-comment cleanup (~~5 min~~) — **DONE**
 
-**Current state of `crates/ch-protocol/src/lib.rs::MessageType`** (per
-the system snapshot):
-
-```rust
-Evidence,
-/// Verifier flips an existing evidence row to `verified` or `failed`.
-/// Maestro Task 2.
-WorkflowClaim,              // ← inherits the wrong doc comment
-EvidenceVerify,             // ← lost its doc
-/// Custom message type
-/// Agent claims a workflow step (Pending -> Claimed)
-Custom(String),             // ← wears WorkflowClaim's doc on top of its own
-```
-
-**Two problems:**
-1. Doc comments orphaned by the sed-driven insertion of `WorkflowClaim`
-2. `WorkflowClaim` wedged between `Evidence` and `EvidenceVerify`,
-   breaking the Evidence/EvidenceVerify pairing readability
-
-**Fix:**
-
-```rust
-/// Agent claim that a task has been completed — written to the
-/// `evidence` table with `status = pending` until a verifier flips it.
-/// Maestro Task 2.
-Evidence,
-/// Verifier flips an existing evidence row to `verified` or `failed`.
-/// Maestro Task 2.
-EvidenceVerify,
-/// Agent claims a workflow step (Pending -> Claimed).  Maestro Task 3.
-WorkflowClaim,
-/// Custom message type
-Custom(String),
-```
-
-No behaviour change (serde rename_all means variant order doesn't
-affect serialization).  Pure readability.
-
-**Commit**: `chore(protocol): restore doc comments after WorkflowClaim insertion`
+✅ Landed in commit `45a7ee5` as part of Claude's rescue.  The
+`MessageType` enum now has proper docs on each variant and the
+Evidence/EvidenceVerify pair is contiguous.  Skip this task.
 
 ---
 
