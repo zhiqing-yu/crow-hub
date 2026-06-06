@@ -708,6 +708,86 @@ mod tests {
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].id, "ev-3");
     }
+
+    // ─── WorkflowStore (Maestro Task 3) ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn workflow_step_round_trip() {
+        let store = fresh_store().await;
+        store.claim_step("wf-1", "step-a", "agent-1").await.unwrap();
+
+        let rows = store.by_workflow("wf-1").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].step_id, "step-a");
+        assert_eq!(rows[0].workflow_id, "wf-1");
+        assert_eq!(rows[0].state, WorkflowStepState::Claimed);
+        assert_eq!(rows[0].claimed_by.as_deref(), Some("agent-1"));
+        // claimed_at is Some (SQLite datetime('now') stores a value even if
+        // RFC3339 parse yields epoch — see by_workflow TODO comment).
+        assert!(rows[0].claimed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn workflow_claim_transitions_state_to_claimed() {
+        let store = fresh_store().await;
+        store.claim_step("wf-2", "step-b", "agent-2").await.unwrap();
+
+        let rows = store.by_workflow("wf-2").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, WorkflowStepState::Claimed);
+    }
+
+    #[tokio::test]
+    async fn workflow_by_workflow_returns_empty_for_unknown() {
+        let store = fresh_store().await;
+        let rows = store.by_workflow("no-such-workflow").await.unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn workflow_by_workflow_returns_all_steps_for_that_workflow() {
+        let store = fresh_store().await;
+        store.claim_step("wf-3", "step-x", "agent-1").await.unwrap();
+        store.claim_step("wf-3", "step-y", "agent-1").await.unwrap();
+        // A step in a different workflow must not appear.
+        store
+            .claim_step("wf-other", "step-z", "agent-1")
+            .await
+            .unwrap();
+
+        let rows = store.by_workflow("wf-3").await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<&str> = rows.iter().map(|r| r.step_id.as_str()).collect();
+        assert!(ids.contains(&"step-x"));
+        assert!(ids.contains(&"step-y"));
+    }
+
+    #[tokio::test]
+    async fn workflow_pending_steps_excludes_claimed() {
+        let store = fresh_store().await;
+        store.claim_step("wf-4", "step-p", "agent-1").await.unwrap();
+
+        let pending = store.pending_steps(10).await.unwrap();
+        assert!(
+            pending.iter().all(|r| r.step_id != "step-p"),
+            "claimed step must not appear in pending_steps"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_double_claim_is_idempotent_and_updates_claimer() {
+        // Design choice: re-claiming a step is an upsert — updates claimed_by
+        // and claimed_at but does NOT create a second row.  Rationale: a step
+        // can change hands (agent hand-off); the last claimer wins.
+        let store = fresh_store().await;
+        store.claim_step("wf-5", "step-q", "agent-1").await.unwrap();
+        store.claim_step("wf-5", "step-q", "agent-2").await.unwrap();
+
+        let rows = store.by_workflow("wf-5").await.unwrap();
+        assert_eq!(rows.len(), 1, "upsert must not insert a second row");
+        assert_eq!(rows[0].claimed_by.as_deref(), Some("agent-2"));
+        assert_eq!(rows[0].state, WorkflowStepState::Claimed);
+    }
 }
 
 // ── WorkflowStore impl (Maestro Task 3) ────────────────────────────────────
