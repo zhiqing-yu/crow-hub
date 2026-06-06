@@ -1,4 +1,4 @@
-use crate::{EvidenceRow, EvidenceStatus, EvidenceStore, MemoryStore};
+use crate::{EvidenceRow, EvidenceStatus, EvidenceStore, MemoryStore, WorkflowStore};
 use ch_core::bus::MessageBus;
 use ch_core::channel::ChannelVisibility;
 use ch_protocol::{AgentId, MemoryEntry, MessageType, Payload};
@@ -6,21 +6,23 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Spawn the background task that persists bus traffic to the memory + evidence
-/// stores.  Subscribes to the "general" channel and dispatches by payload kind:
+/// + workflow stores.  Subscribes to the "general" channel and dispatches by
+/// payload kind:
 ///
 ///   * `Payload::Text` + TaskRequest/TaskResponse → `messages` table (chat)
 ///   * `Payload::Handoff` + Handoff               → `messages` table (JSON in content, memory_type=handoff)
 ///   * `Payload::Evidence` + Evidence             → `evidence` table (write_evidence)
 ///   * `Payload::EvidenceVerify` + EvidenceVerify → `evidence` table (verify/fail)
+///   * `Payload::WorkflowClaim` + WorkflowClaim   → `workflow_steps` table (claim_step)
 ///   * anything else (heartbeats, metrics, etc.)  → silently skipped
 ///
-/// `memory_store` and `evidence_store` are usually the same concrete
-/// `SqliteMemoryStore` cloned into two trait objects — callers can pass
-/// `store.clone()` for both arguments.
+/// All three store arguments are usually the same concrete `SqliteMemoryStore`
+/// cloned three times — callers can pass `store.clone()` for each.
 pub fn spawn_memory_writer(
     bus: Arc<MessageBus>,
     memory_store: Arc<dyn MemoryStore>,
     evidence_store: Arc<dyn EvidenceStore>,
+    workflow_store: Arc<dyn WorkflowStore>,
 ) -> tokio::task::JoinHandle<()> {
     let writer_id = AgentId::new();
     let store = memory_store;
@@ -30,9 +32,25 @@ pub fn spawn_memory_writer(
         info!("memory writer subscribed to general channel");
 
         while let Some(msg) = rx.recv().await {
-            // Dispatch evidence payloads BEFORE the message-table tuple match
-            // so they write to the evidence table and skip the rest of the loop.
+            // Dispatch workflow / evidence payloads BEFORE the message-table
+            // tuple match so they write to their own tables and skip the rest.
             match (&msg.payload, &msg.message_type) {
+                (Payload::WorkflowClaim(c), MessageType::WorkflowClaim) => {
+                    match workflow_store
+                        .claim_step(&c.workflow_id, &c.step_id, &c.agent_id)
+                        .await
+                    {
+                        Ok(_) => debug!(
+                            "memory writer: claimed workflow step (workflow={}, step={}, agent={})",
+                            c.workflow_id, c.step_id, c.agent_id
+                        ),
+                        Err(e) => warn!(
+                            "memory writer: failed to claim workflow step (step={}, agent={}): {}",
+                            c.step_id, c.agent_id, e
+                        ),
+                    }
+                    continue;
+                }
                 (Payload::Evidence(claim), MessageType::Evidence) => {
                     let row = EvidenceRow {
                         id: msg.message_id.to_string(),
