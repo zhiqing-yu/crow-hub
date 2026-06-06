@@ -278,7 +278,25 @@ fn run_ssh_picker(
                     let user = read_line()?;
 
                     if !host.trim().is_empty() && !user.trim().is_empty() {
-                        hosts.push((host.trim().to_string(), user.trim().to_string()));
+                        let host = host.trim().to_string();
+                        let user = user.trim().to_string();
+
+                        print!("  Checking SSH connection to {}@{}... ", user, host);
+                        io::stdout().flush()?;
+
+                        match EnvironmentScanner::check_ssh_connection(&host, &user) {
+                            Ok(()) => {
+                                println!("✓ Connected");
+                                hosts.push((host, user));
+                            }
+                            Err(reason) => {
+                                println!("✗ Failed");
+                                println!("  Error: {}", reason);
+                                println!("  Hint: make sure SSH key-based auth is set up (`ssh-copy-id {}@{}`).", user, host);
+                                println!("\n  Press Enter to continue...");
+                                let _ = read_line();
+                            }
+                        }
                     }
 
                     terminal::enable_raw_mode()?;

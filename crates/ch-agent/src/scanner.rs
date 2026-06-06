@@ -445,6 +445,48 @@ impl EnvironmentScanner {
         None
     }
 
+    /// Probe whether an SSH host is reachable and accepts our key.
+    ///
+    /// Runs `ssh … exit 0` with a short timeout and `BatchMode=yes` so it
+    /// never prompts.  Returns `Ok(())` on success or an `Err` containing
+    /// a human-readable reason on failure (timeout, host-key rejection, etc.).
+    pub fn check_ssh_connection(host: &str, user: &str) -> Result<(), String> {
+        let target = format!("{}@{}", user, host);
+        let output = Command::new("ssh")
+            .args([
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                &target,
+                "exit",
+                "0",
+            ])
+            .output()
+            .map_err(|e| format!("failed to spawn ssh: {}", e))?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let msg = stderr.trim();
+            if msg.is_empty() {
+                Err(format!(
+                    "ssh exited {}",
+                    output
+                        .status
+                        .code()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "?".to_string())
+                ))
+            } else {
+                Err(msg.to_string())
+            }
+        }
+    }
+
     /// Check if a binary exists on an SSH host and return its path.
     ///
     /// Strategy: `bash -ilc` is unreliable over SSH without a real TTY because
@@ -702,6 +744,17 @@ mod tests {
     #[test]
     fn test_known_agents_not_empty() {
         assert!(!known_agents().is_empty());
+    }
+
+    #[test]
+    fn check_ssh_connection_unreachable_host_returns_err() {
+        // An IP in the documentation range (192.0.2.0/24) is guaranteed to be
+        // unreachable, so this tests the failure path without hitting the network.
+        let result = EnvironmentScanner::check_ssh_connection("192.0.2.1", "nobody");
+        assert!(
+            result.is_err(),
+            "expected Err for unreachable host, got Ok"
+        );
     }
 
     #[test]
