@@ -138,6 +138,17 @@ enum MemoryCommands {
         #[arg(short = 'n', long, default_value_t = 50)]
         count: usize,
     },
+    /// List workflow steps from the workflow_steps table.
+    /// Default: all steps across all workflows (pending_steps up to --count).
+    /// Pass --workflow to scope to a single workflow.
+    Workflow {
+        /// Filter to a specific workflow_id.
+        #[arg(short, long)]
+        workflow: Option<String>,
+        /// Maximum rows to show (default 50)
+        #[arg(short = 'n', long, default_value_t = 50)]
+        count: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -313,11 +324,12 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
         .to_string();
     let memory_store =
         Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
-    // The writer needs the store via two traits — MemoryStore for chat/handoff,
-    // EvidenceStore for evidence claims.  SqliteMemoryStore implements both,
-    // so the same Arc cloned twice works.
+    // The writer needs the store via three traits — MemoryStore for chat/handoff,
+    // EvidenceStore for evidence claims, WorkflowStore for workflow steps.
+    // SqliteMemoryStore implements all three, so the same Arc cloned works.
     let _writer_handle = ch_memory::writer::spawn_memory_writer(
         hub.bus.clone(),
+        memory_store.clone(),
         memory_store.clone(),
         memory_store.clone(),
     );
@@ -413,11 +425,12 @@ async fn run_server(config: ch_core::HubConfig) -> anyhow::Result<()> {
         .to_string();
     let memory_store =
         Arc::new(ch_memory::backends::sqlite::SqliteMemoryStore::new(memory_config).await?);
-    // The writer needs the store via two traits — MemoryStore for chat/handoff,
-    // EvidenceStore for evidence claims.  SqliteMemoryStore implements both,
-    // so the same Arc cloned twice works.
+    // The writer needs the store via three traits — MemoryStore for chat/handoff,
+    // EvidenceStore for evidence claims, WorkflowStore for workflow steps.
+    // SqliteMemoryStore implements all three, so the same Arc cloned works.
     let _writer_handle = ch_memory::writer::spawn_memory_writer(
         hub.bus.clone(),
+        memory_store.clone(),
         memory_store.clone(),
         memory_store.clone(),
     );
@@ -663,6 +676,7 @@ async fn run_memory(command: MemoryCommands) -> anyhow::Result<()> {
             status,
             count,
         } => run_memory_evidence(task, status, count).await,
+        MemoryCommands::Workflow { workflow, count } => run_memory_workflow(workflow, count).await,
     }
 }
 
@@ -853,6 +867,54 @@ async fn run_memory_evidence(
         if let Some(reason) = row.metadata.get("failure_reason").and_then(|v| v.as_str()) {
             println!("    reason: {}", reason);
         }
+    }
+    Ok(())
+}
+
+/// List rows from the `workflow_steps` table.
+///
+/// * `--workflow <id>` — all steps for one workflow (any state), oldest first
+/// * (no flag)        — up to `--count` pending steps across all workflows
+async fn run_memory_workflow(workflow: Option<String>, count: usize) -> anyhow::Result<()> {
+    use ch_memory::WorkflowStore;
+
+    let store = open_memory_store().await?;
+
+    let rows = if let Some(ref wf_id) = workflow {
+        store.by_workflow(wf_id).await?
+    } else {
+        store.pending_steps(count).await?
+    };
+
+    let scope = workflow
+        .as_deref()
+        .map(|w| format!("workflow={}", w))
+        .unwrap_or_else(|| "pending steps".to_string());
+    println!(
+        "━━━ crow memory workflow — {}, {} rows ━━━",
+        scope,
+        rows.len()
+    );
+
+    if rows.is_empty() {
+        println!("(no workflow steps match)");
+        println!("Tip: in the TUI, `/workflow claim <step_id>` claims a step.");
+        return Ok(());
+    }
+
+    for row in rows {
+        let state_glyph = match row.state {
+            ch_protocol::WorkflowStepState::Pending => "○",
+            ch_protocol::WorkflowStepState::Claimed => "◐",
+            ch_protocol::WorkflowStepState::InProgress => "●",
+            ch_protocol::WorkflowStepState::Done => "✓",
+            ch_protocol::WorkflowStepState::Failed => "✗",
+        };
+        let claimed_by = row.claimed_by.as_deref().unwrap_or("(none)");
+        println!(
+            "{} step={:<24}  workflow={:<20}  by={}",
+            state_glyph, row.step_id, row.workflow_id, claimed_by,
+        );
     }
     Ok(())
 }

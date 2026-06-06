@@ -1,0 +1,18 @@
+name: multi_agent_review
+description: Two-step code review — a writer produces a patch, a reviewer checks it.
+
+steps:
+  - id: write_patch
+    agent: claude-wsl-ubuntu
+    prompt: |
+      Implement the feature described in the issue.
+      Output the unified diff only; no prose.
+    state: pending          # initial state; orchestrator transitions on dispatch
+
+  - id: review_patch
+    agent: gemini-wsl-ubuntu
+    prompt: |
+      Review {{ write_patch.output }} for correctness, security, and style.
+      Return: APPROVED, CHANGES_REQUESTED, or REJECTED with one-line rationale.
+    depends_on: [write_patch]
+    state: pending
