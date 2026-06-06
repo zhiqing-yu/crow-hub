@@ -5,7 +5,7 @@ use ch_core::MessageBus;
 use ch_memory::MemoryStore;
 use ch_protocol::{
     AgentAddress, AgentId, AgentMessage, EvidenceClaim, HandoffEnvelope, MemoryEntry, MessageType,
-    Payload,
+    Payload, WorkflowClaimMsg,
 };
 use crossterm::{
     event::{
@@ -33,8 +33,15 @@ use tokio::sync::mpsc;
 /// a regression test in `tests` asserts every entry here appears in
 /// `help_lines()`, so adding a new command without updating `/help` will
 /// fail CI rather than silently leaving users without docs.
-pub const SUPPORTED_COMMANDS: &[&str] =
-    &["/clear", "/model", "/all", "/handoff", "/evidence", "/help"];
+pub const SUPPORTED_COMMANDS: &[&str] = &[
+    "/clear",
+    "/model",
+    "/all",
+    "/handoff",
+    "/evidence",
+    "/workflow",
+    "/help",
+];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum FocusedPanel {
@@ -397,6 +404,65 @@ impl App {
                     }
                 }
             }
+            "/workflow" => {
+                // Manual workflow step claim.  Syntax:
+                //   /workflow claim <step_id>
+                // Broadcasts WorkflowClaim on the bus; the memory writer
+                // persists it to `workflow_steps` via claim_step().
+                // `crow memory workflow` lists them.
+                let (subcmd, rest) = match arg.split_once(' ') {
+                    Some((s, r)) => (s.trim(), r.trim()),
+                    None => (arg, ""),
+                };
+                match subcmd {
+                    "claim" if !rest.is_empty() => {
+                        let step_id = rest.to_string();
+                        // Local feedback.  `🪧` distinguishes workflow steps
+                        // from evidence (📋) and handoffs (⇄); the chat scope
+                        // filter passes any line starting with `🪧`.
+                        self.messages
+                            .push(format!("🪧 You → claimed step {}", step_id));
+
+                        let bus = self.bus.clone();
+                        let user_id = self.user_agent_id;
+                        let claim = WorkflowClaimMsg {
+                            step_id: step_id.clone(),
+                            workflow_id: "tui-session".to_string(),
+                            agent_id: user_id.to_string(),
+                        };
+                        let bus_msg = AgentMessage::new(
+                            AgentAddress {
+                                agent_id: user_id,
+                                agent_name: "You".to_string(),
+                                adapter_type: "tui".to_string(),
+                            },
+                            None,
+                            MessageType::WorkflowClaim,
+                            Payload::WorkflowClaim(claim),
+                        );
+                        tokio::spawn(async move {
+                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await
+                            {
+                                tracing::error!("Failed to send workflow claim to bus: {}", e);
+                            }
+                        });
+                    }
+                    "claim" => {
+                        self.messages
+                            .push("/workflow claim — usage: /workflow claim <step_id>".into());
+                    }
+                    "" => {
+                        self.messages
+                            .push("/workflow — usage: /workflow claim <step_id>".into());
+                    }
+                    other => {
+                        self.messages.push(format!(
+                            "/workflow — unknown sub-command '{}' (try: claim)",
+                            other
+                        ));
+                    }
+                }
+            }
             "/help" => {
                 for line in help_lines() {
                     self.messages.push(line);
@@ -470,6 +536,7 @@ pub(crate) fn help_lines() -> Vec<String> {
         "/evidence claim <text>   Emit an Evidence claim".to_string(),
         "/evidence verify <id>    Verify evidence (manual)".to_string(),
         "/evidence fail <id> <r>  Fail evidence (manual)".to_string(),
+        "/workflow claim <step_id>  Claim a workflow step".to_string(),
         "/help               Show this help".to_string(),
         "┈┈┈ Keyboard Shortcuts ┈┈┈".to_string(),
         "Tab         Switch panel (Agents→Chat→Memory→Input)".to_string(),
@@ -1190,6 +1257,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                         m.starts_with("You:")
                             || m.starts_with("⇄")
                             || m.starts_with("📋")
+                            || m.starts_with("🪧")
                             || m.starts_with(&format!("{}:", name))
                     }
                     None => true,
@@ -1323,6 +1391,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             "  /model <name>         Override model for next messages",
             "  /all                  Show all agents in chat",
             "  /evidence claim|verify|fail ...",
+            "  /workflow claim <step_id>",
             "  /help                 Show this help",
             "  ?                     Open this overlay",
             "",
