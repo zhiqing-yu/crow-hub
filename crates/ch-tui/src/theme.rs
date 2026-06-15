@@ -67,7 +67,16 @@ pub const HIGH_CONTRAST_THEME: Theme = Theme {
 };
 
 pub fn from_env() -> Theme {
-    match std::env::var("CROW_THEME").ok().as_deref() {
+    from_name(std::env::var("CROW_THEME").ok().as_deref())
+}
+
+/// Pure theme selection from an optional `CROW_THEME` value.
+///
+/// Kept separate from [`from_env`] so the selection logic can be tested
+/// without mutating the process-global environment, which races under
+/// parallel test execution.
+pub fn from_name(value: Option<&str>) -> Theme {
+    match value {
         Some("high-contrast") | Some("hc") => HIGH_CONTRAST_THEME,
         _ => DEFAULT_THEME,
     }
@@ -78,23 +87,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_env_default() {
-        std::env::remove_var("CROW_THEME");
-        let t = from_env();
-        assert_eq!(t.name, "default");
+    fn from_name_default() {
+        assert_eq!(from_name(None).name, "default");
+        assert_eq!(from_name(Some("unrecognized")).name, "default");
     }
 
     #[test]
-    fn from_env_hc() {
-        std::env::set_var("CROW_THEME", "hc");
-        let t = from_env();
-        assert_eq!(t.name, "high-contrast");
+    fn from_name_hc() {
+        assert_eq!(from_name(Some("hc")).name, "high-contrast");
     }
 
     #[test]
-    fn from_env_high_contrast() {
-        std::env::set_var("CROW_THEME", "high-contrast");
-        let t = from_env();
-        assert_eq!(t.name, "high-contrast");
+    fn from_name_high_contrast() {
+        assert_eq!(from_name(Some("high-contrast")).name, "high-contrast");
     }
 }
