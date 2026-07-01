@@ -116,6 +116,26 @@ crow agent list
 crow run examples/simple-workflow.yaml
 ```
 
+## 💬 TUI 内置命令
+
+在 `crow` 的 Chat 输入框中，以下斜杠命令可用（`/help` 或 `?` 随时查看完整列表）：
+
+| 命令 | 作用 |
+|------|------|
+| `/clear` | 清空聊天记录 |
+| `/model <name>` | 覆盖后续消息使用的模型（留空显示当前值） |
+| `/all` | 取消 Agent 范围限定，显示所有 Agent 的消息 |
+| `/handoff <summary>` | 在总线上发出一个结构化的 Handoff（交接）信封 |
+| `/evidence claim <text>` | 提交一个可审计的任务完成声明 |
+| `/evidence verify <id>` / `/evidence fail <id> <reason>` | 手动核验 / 驳回一条 Evidence |
+| `/workflow claim <step_id>` | 认领一个工作流步骤（Pending → Claimed） |
+| `/workflow start <step_id>` | 标记步骤进行中（Claimed → InProgress） |
+| `/workflow done <step_id>` / `/workflow fail <step_id>` | 标记步骤完成 / 失败 |
+
+工作流步骤的状态可以在 **Workflow** 标签页（`Tab` 循环切换）中实时查看，
+用 `↑↓` 滚动、`r` 手动刷新。也可以在终端用
+`crow memory workflow` 查看同一份数据。
+
 ## 📖 使用示例
 
 ### 命令行使用
