@@ -5,7 +5,7 @@ use ch_core::MessageBus;
 use ch_memory::{MemoryStore, WorkflowStepRow, WorkflowStore};
 use ch_protocol::{
     AgentAddress, AgentId, AgentMessage, EvidenceClaim, HandoffEnvelope, MemoryEntry, MessageType,
-    Payload, WorkflowClaimMsg,
+    Payload, WorkflowClaimMsg, WorkflowUpdateMsg,
 };
 use crossterm::{
     event::{
@@ -441,10 +441,13 @@ impl App {
                 }
             }
             "/workflow" => {
-                // Manual workflow step claim.  Syntax:
+                // Manual workflow step lifecycle.  Syntax:
                 //   /workflow claim <step_id>
-                // Broadcasts WorkflowClaim on the bus; the memory writer
-                // persists it to `workflow_steps` via claim_step().
+                //   /workflow start <step_id>
+                //   /workflow done  <step_id>
+                //   /workflow fail  <step_id>
+                // Broadcasts WorkflowClaim/WorkflowUpdate on the bus; the
+                // memory writer persists via claim_step()/set_state().
                 // `crow memory workflow` lists them.
                 let (subcmd, rest) = match arg.split_once(' ') {
                     Some((s, r)) => (s.trim(), r.trim()),
@@ -483,17 +486,55 @@ impl App {
                             }
                         });
                     }
-                    "claim" => {
+                    "start" | "done" | "fail" if !rest.is_empty() => {
+                        let step_id = rest.to_string();
+                        let (state, verb) = match subcmd {
+                            "start" => (ch_protocol::WorkflowStepState::InProgress, "started"),
+                            "done" => (ch_protocol::WorkflowStepState::Done, "completed"),
+                            _ => (ch_protocol::WorkflowStepState::Failed, "failed"),
+                        };
                         self.messages
-                            .push("/workflow claim — usage: /workflow claim <step_id>".into());
+                            .push(format!("🪧 You → {} step {}", verb, step_id));
+
+                        let bus = self.bus.clone();
+                        let user_id = self.user_agent_id;
+                        let update = WorkflowUpdateMsg {
+                            step_id: step_id.clone(),
+                            state,
+                            agent_id: user_id.to_string(),
+                            reason: None,
+                        };
+                        let bus_msg = AgentMessage::new(
+                            AgentAddress {
+                                agent_id: user_id,
+                                agent_name: "You".to_string(),
+                                adapter_type: "tui".to_string(),
+                            },
+                            None,
+                            MessageType::WorkflowUpdate,
+                            Payload::WorkflowUpdate(update),
+                        );
+                        tokio::spawn(async move {
+                            if let Err(e) = bus.send_to_channel("general", &user_id, bus_msg).await
+                            {
+                                tracing::error!("Failed to send workflow update to bus: {}", e);
+                            }
+                        });
+                    }
+                    "claim" | "start" | "done" | "fail" => {
+                        self.messages.push(format!(
+                            "/workflow {} — usage: /workflow {} <step_id>",
+                            subcmd, subcmd
+                        ));
                     }
                     "" => {
-                        self.messages
-                            .push("/workflow — usage: /workflow claim <step_id>".into());
+                        self.messages.push(
+                            "/workflow — usage: /workflow <claim|start|done|fail> <step_id>".into(),
+                        );
                     }
                     other => {
                         self.messages.push(format!(
-                            "/workflow — unknown sub-command '{}' (try: claim)",
+                            "/workflow — unknown sub-command '{}' (try: claim, start, done, fail)",
                             other
                         ));
                     }
@@ -574,6 +615,9 @@ pub(crate) fn help_lines() -> Vec<String> {
         "/evidence verify <id>    Verify evidence (manual)".to_string(),
         "/evidence fail <id> <r>  Fail evidence (manual)".to_string(),
         "/workflow claim <step_id>  Claim a workflow step".to_string(),
+        "/workflow start <step_id>  Mark a step in progress".to_string(),
+        "/workflow done <step_id>   Mark a step done".to_string(),
+        "/workflow fail <step_id>   Mark a step failed".to_string(),
         "/help               Show this help".to_string(),
         "┈┈┈ Keyboard Shortcuts ┈┈┈".to_string(),
         "Tab         Cycle tabs (Home→Chat→Monitor→Memory→Workflow)".to_string(),
@@ -1533,7 +1577,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             "  /model <name>         Override model for next messages",
             "  /all                  Show all agents in chat",
             "  /evidence claim|verify|fail ...",
-            "  /workflow claim <step_id>",
+            "  /workflow claim|start|done|fail <step_id>",
             "  /help                 Show this help",
             "  ?                     Open this overlay",
             "",
