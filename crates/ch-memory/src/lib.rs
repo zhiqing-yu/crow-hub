@@ -452,4 +452,7 @@ pub trait WorkflowStore: Send + Sync {
     async fn claim_step(&self, workflow_id: &str, step_id: &str, agent_id: &str) -> Result<()>;
     async fn by_workflow(&self, workflow_id: &str) -> Result<Vec<WorkflowStepRow>>;
     async fn pending_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>>;
+    /// All steps across all workflows, newest-claimed first.  Used by the
+    /// Workflow TUI tab to show the full picture regardless of state.
+    async fn all_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>>;
 }

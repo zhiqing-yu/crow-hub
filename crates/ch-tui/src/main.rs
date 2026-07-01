@@ -402,6 +402,7 @@ async fn run_tui(config: ch_core::HubConfig) -> anyhow::Result<()> {
         tx,
         response_rx,
         Some(memory_store.clone() as Arc<dyn ch_memory::MemoryStore>),
+        Some(memory_store.clone() as Arc<dyn ch_memory::WorkflowStore>),
     )?;
 
     // Clean shutdown
