@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 ///   * `Payload::Evidence` + Evidence             → `evidence` table (write_evidence)
 ///   * `Payload::EvidenceVerify` + EvidenceVerify → `evidence` table (verify/fail)
 ///   * `Payload::WorkflowClaim` + WorkflowClaim   → `workflow_steps` table (claim_step)
+///   * `Payload::WorkflowUpdate` + WorkflowUpdate → `workflow_steps` table (set_state)
 ///   * anything else (heartbeats, metrics, etc.)  → silently skipped
 ///
 /// All three store arguments are usually the same concrete `SqliteMemoryStore`
@@ -47,6 +48,19 @@ pub fn spawn_memory_writer(
                         Err(e) => warn!(
                             "memory writer: failed to claim workflow step (step={}, agent={}): {}",
                             c.step_id, c.agent_id, e
+                        ),
+                    }
+                    continue;
+                }
+                (Payload::WorkflowUpdate(u), MessageType::WorkflowUpdate) => {
+                    match workflow_store.set_state(&u.step_id, u.state).await {
+                        Ok(_) => debug!(
+                            "memory writer: workflow step {} -> {:?} (agent={})",
+                            u.step_id, u.state, u.agent_id
+                        ),
+                        Err(e) => warn!(
+                            "memory writer: failed to update workflow step {} (agent={}): {}",
+                            u.step_id, u.agent_id, e
                         ),
                     }
                     continue;
