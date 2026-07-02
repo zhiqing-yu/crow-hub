@@ -9,6 +9,7 @@ use tracing::info;
 mod app;
 mod setup;
 mod theme;
+mod workflow_file;
 
 #[derive(Parser)]
 #[command(name = "crow")]
@@ -498,14 +499,44 @@ async fn run_workflow(
     workflow_path: PathBuf,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    println!("Running workflow: {:?}", workflow_path);
+    use anyhow::Context;
+
+    let content = std::fs::read_to_string(&workflow_path)
+        .with_context(|| format!("failed to read workflow file: {}", workflow_path.display()))?;
+    let file: workflow_file::WorkflowFile = workflow_file::parse(&content)
+        .with_context(|| format!("failed to parse workflow YAML: {}", workflow_path.display()))?;
+    let order = workflow_file::validate_and_order(&file.workflow)
+        .map_err(|e| anyhow::anyhow!("workflow validation failed: {}", e))?;
+
+    println!(
+        "Workflow '{}' ({} steps) — validation passed",
+        file.workflow.name,
+        file.workflow.steps.len()
+    );
+    for step_id in &order {
+        let step = file
+            .workflow
+            .steps
+            .iter()
+            .find(|s| &s.id == step_id)
+            .expect("order only contains known step ids");
+        println!("  - {} ({}) agent={}", step.id, step.name, step.agent);
+    }
 
     if dry_run {
-        println!("✓ Workflow validation passed");
         return Ok(());
     }
 
-    println!("Workflow execution is under development.");
+    println!();
+    println!(
+        "Workflow execution engine is not implemented yet — the {} step(s) above were \
+         validated (and ordered by depends_on) but not run.",
+        file.workflow.steps.len()
+    );
+    println!(
+        "Track steps manually via `/workflow claim|start|done|fail <step_id>` in the TUI, \
+         or `crow memory workflow`."
+    );
     Ok(())
 }
 
