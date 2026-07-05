@@ -2,7 +2,7 @@ use crate::theme::Theme;
 use anyhow::Result;
 use ch_agent::{AgentActivity, AgentInfo, AgentRuntime};
 use ch_core::MessageBus;
-use ch_memory::MemoryStore;
+use ch_memory::{MemoryStore, WorkflowStepRow, WorkflowStore};
 use ch_protocol::{
     AgentAddress, AgentId, AgentMessage, EvidenceClaim, HandoffEnvelope, MemoryEntry, MessageType,
     Payload, WorkflowClaimMsg,
@@ -65,6 +65,7 @@ pub enum Tab {
     Chat,
     Monitor,
     Memory,
+    Workflow,
 }
 
 /// App state
@@ -106,6 +107,14 @@ pub struct App {
     /// /all forces global view even when single agent selected
     pub chat_scope_all: bool,
     pub show_help_overlay: bool,
+    /// Workflow store for the Workflow tab (read-only, shared with writer)
+    pub workflow_store: Option<Arc<dyn WorkflowStore>>,
+    /// Cached workflow step rows for the Workflow tab
+    pub workflow_rows: Vec<WorkflowStepRow>,
+    /// Pending workflow refresh result (populated by background task)
+    pub pending_workflow: Arc<std::sync::Mutex<Option<Vec<WorkflowStepRow>>>>,
+    /// Scroll offset for the workflow panel
+    pub workflow_scroll_offset: usize,
 }
 
 impl App {
@@ -116,6 +125,7 @@ impl App {
         tx: mpsc::Sender<(String, String)>,
         response_rx: mpsc::Receiver<(String, String)>,
         memory_store: Option<Arc<dyn MemoryStore>>,
+        workflow_store: Option<Arc<dyn WorkflowStore>>,
     ) -> Self {
         let agents = runtime.list_agents();
 
@@ -145,6 +155,10 @@ impl App {
             active_tab: Tab::Chat,
             chat_scope_all: false,
             show_help_overlay: false,
+            workflow_store,
+            workflow_rows: Vec::new(),
+            pending_workflow: Arc::new(std::sync::Mutex::new(None)),
+            workflow_scroll_offset: 0,
         }
     }
 
@@ -191,6 +205,28 @@ impl App {
     pub fn collect_memory_refresh(&mut self) {
         if let Some(rows) = self.pending_memory.lock().unwrap().take() {
             self.memory_rows = rows;
+        }
+    }
+
+    /// Kick off a background workflow step refresh (all steps across all
+    /// workflows, newest-claimed first).  Results land in `pending_workflow`
+    /// and are collected on the next tick via `collect_workflow_refresh`.
+    pub fn refresh_workflow(&mut self) {
+        if let Some(ref store) = self.workflow_store {
+            let store = store.clone();
+            let pending = self.pending_workflow.clone();
+            tokio::spawn(async move {
+                if let Ok(rows) = store.all_steps(50).await {
+                    *pending.lock().unwrap() = Some(rows);
+                }
+            });
+        }
+    }
+
+    /// Collect results from a background workflow refresh.
+    pub fn collect_workflow_refresh(&mut self) {
+        if let Some(rows) = self.pending_workflow.lock().unwrap().take() {
+            self.workflow_rows = rows;
         }
     }
 
@@ -488,6 +524,7 @@ impl App {
     pub fn on_tick(&mut self) {
         self.tick_count = self.tick_count.wrapping_add(1);
         self.collect_memory_refresh();
+        self.collect_workflow_refresh();
         while let Ok((agent, response)) = self.response_rx.try_recv() {
             append_chat_message(&mut self.messages, &agent, &response);
         }
@@ -539,7 +576,7 @@ pub(crate) fn help_lines() -> Vec<String> {
         "/workflow claim <step_id>  Claim a workflow step".to_string(),
         "/help               Show this help".to_string(),
         "┈┈┈ Keyboard Shortcuts ┈┈┈".to_string(),
-        "Tab         Switch panel (Agents→Chat→Memory→Input)".to_string(),
+        "Tab         Cycle tabs (Home→Chat→Monitor→Memory→Workflow)".to_string(),
         "↑↓          Navigate / scroll".to_string(),
         "Space       Multi-select agent (Agents panel)".to_string(),
         "Enter       Send message".to_string(),
@@ -554,6 +591,7 @@ pub fn run_tui_app(
     tx: mpsc::Sender<(String, String)>,
     response_rx: mpsc::Receiver<(String, String)>,
     memory_store: Option<Arc<dyn MemoryStore>>,
+    workflow_store: Option<Arc<dyn WorkflowStore>>,
 ) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
@@ -585,7 +623,15 @@ pub fn run_tui_app(
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let mut app = App::new(runtime, bus, user_agent_id, tx, response_rx, memory_store);
+    let mut app = App::new(
+        runtime,
+        bus,
+        user_agent_id,
+        tx,
+        response_rx,
+        memory_store,
+        workflow_store,
+    );
     let res = run_loop(&mut terminal, &mut app);
 
     // Restore terminal
@@ -679,7 +725,8 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                                 Tab::Home => Tab::Chat,
                                 Tab::Chat => Tab::Monitor,
                                 Tab::Monitor => Tab::Memory,
-                                Tab::Memory => Tab::Home,
+                                Tab::Memory => Tab::Workflow,
+                                Tab::Workflow => Tab::Home,
                             };
                             // Auto-focus appropriate panel
                             app.focused_panel = match app.active_tab {
@@ -688,6 +735,9 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             };
                             if app.active_tab == Tab::Memory {
                                 app.refresh_memory();
+                            }
+                            if app.active_tab == Tab::Workflow {
+                                app.refresh_workflow();
                             }
                         }
                         KeyCode::BackTab => {
@@ -700,6 +750,14 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                             if app.active_tab == Tab::Memory {
                                 app.refresh_memory();
                             }
+                        }
+                        KeyCode::Up if app.active_tab == Tab::Workflow => {
+                            app.workflow_scroll_offset =
+                                app.workflow_scroll_offset.saturating_sub(1);
+                        }
+                        KeyCode::Down if app.active_tab == Tab::Workflow => {
+                            app.workflow_scroll_offset =
+                                app.workflow_scroll_offset.saturating_add(1);
                         }
                         KeyCode::Up => match app.focused_panel {
                             FocusedPanel::Agents => {
@@ -745,6 +803,9 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result
                         },
                         KeyCode::Char('r') if app.focused_panel == FocusedPanel::Memory => {
                             app.refresh_memory();
+                        }
+                        KeyCode::Char('r') if app.active_tab == Tab::Workflow => {
+                            app.refresh_workflow();
                         }
                         KeyCode::Char(' ') if app.focused_panel == FocusedPanel::Agents => {
                             // Space on Agents panel = toggle multi-select on
@@ -905,6 +966,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         ("Chat", Tab::Chat),
         ("Monitor", Tab::Monitor),
         ("Memory", Tab::Memory),
+        ("Workflow", Tab::Workflow),
     ];
     let tab_spans: Vec<Span> = tabs
         .iter()
@@ -1240,6 +1302,82 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
             let monitor_list = List::new(rows);
             f.render_widget(monitor_list, monitor_inner);
         }
+        Tab::Workflow => {
+            // ── Workflow Panel — pending workflow steps ────────────
+            let wf_block = Block::default()
+                .borders(Borders::ALL)
+                .title("Workflow — All Steps  (r:refresh  ↑↓:scroll)")
+                .border_style(Style::default().fg(app.theme.border_focused));
+
+            let wf_inner = wf_block.inner(right_chunks[0]);
+            f.render_widget(wf_block, right_chunks[0]);
+
+            let mut wf_items: Vec<ListItem> = Vec::new();
+
+            // Header row
+            wf_items.push(ListItem::new(Line::from(vec![Span::styled(
+                format!(
+                    "  {:<3} {:<26} {:<22} {}",
+                    "St", "Step ID", "Workflow", "Claimed By"
+                ),
+                Style::default()
+                    .fg(app.theme.agent_meta)
+                    .add_modifier(Modifier::BOLD),
+            )])));
+            wf_items.push(ListItem::new(Line::from(Span::styled(
+                "─".repeat(wf_inner.width.saturating_sub(2) as usize),
+                Style::default().fg(app.theme.agent_meta),
+            ))));
+
+            if app.workflow_rows.is_empty() {
+                wf_items.push(ListItem::new(Line::from(Span::styled(
+                    "  (no steps yet — use /workflow claim <step_id> to claim one)",
+                    Style::default().fg(app.theme.summary),
+                ))));
+            } else {
+                let height = wf_inner.height.saturating_sub(3) as usize; // 2 header + 1 buffer
+                let max_scroll = app.workflow_rows.len().saturating_sub(height);
+                let scroll = app.workflow_scroll_offset.min(max_scroll);
+
+                for row in app.workflow_rows.iter().skip(scroll).take(height) {
+                    let (state_glyph, state_color) = match row.state {
+                        ch_protocol::WorkflowStepState::Pending => ("○", app.theme.summary),
+                        ch_protocol::WorkflowStepState::Claimed => ("◐", app.theme.border_focused),
+                        ch_protocol::WorkflowStepState::InProgress => {
+                            ("●", app.theme.status_thinking)
+                        }
+                        ch_protocol::WorkflowStepState::Done => ("✓", app.theme.status_idle),
+                        ch_protocol::WorkflowStepState::Failed => ("✗", app.theme.status_errored),
+                    };
+                    let claimed_by = row.claimed_by.as_deref().unwrap_or("—");
+                    let step_id: String = row.step_id.chars().take(25).collect();
+                    let wf_id: String = row.workflow_id.chars().take(21).collect();
+
+                    wf_items.push(ListItem::new(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            format!("{:<3}", state_glyph),
+                            Style::default().fg(state_color),
+                        ),
+                        Span::styled(
+                            format!("{:<26}", step_id),
+                            Style::default().fg(app.theme.agent_cursor),
+                        ),
+                        Span::styled(
+                            format!("{:<22}", wf_id),
+                            Style::default().fg(app.theme.agent_meta),
+                        ),
+                        Span::styled(
+                            claimed_by.to_string(),
+                            Style::default().fg(app.theme.suffix),
+                        ),
+                    ])));
+                }
+            }
+
+            let wf_list = List::new(wf_items);
+            f.render_widget(wf_list, wf_inner);
+        }
         _ => {
             // ── Chat Panel (Agents + Chat tabs) ─────────────────────
             let scope_agent = if app.chat_scope_all || !app.multi_selected.is_empty() {
@@ -1322,13 +1460,17 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     f.render_widget(input_par, right_chunks[1]);
 
     // Footer: keyboard shortcut bar (context-sensitive)
-    let shortcuts = match app.focused_panel {
-        FocusedPanel::Agents => {
-            "↑↓:navigate  Space:multi-select  Backspace:clear  Enter:send  Tab:next"
+    let shortcuts = if app.active_tab == Tab::Workflow {
+        "↑↓:scroll  r:refresh  Tab:next  Ctrl+C:quit"
+    } else {
+        match app.focused_panel {
+            FocusedPanel::Agents => {
+                "↑↓:navigate  Space:multi-select  Backspace:clear  Enter:send  Tab:next"
+            }
+            FocusedPanel::Chat => "↑↓:scroll  Tab:next  Ctrl+C:quit",
+            FocusedPanel::Input => "Enter:send  Tab:next  Ctrl+C:quit",
+            FocusedPanel::Memory => "↑↓:scroll  r:refresh  Tab:next  Ctrl+C:quit",
         }
-        FocusedPanel::Chat => "↑↓:scroll  Tab:next  Ctrl+C:quit",
-        FocusedPanel::Input => "Enter:send  Tab:next  Ctrl+C:quit",
-        FocusedPanel::Memory => "↑↓:scroll  r:refresh  Tab:next  Ctrl+C:quit",
     };
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -1379,7 +1521,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         let lines: Vec<Line> = [
             "",
             "Keyboard",
-            "  Tab         Switch tab (Home → Chat → Monitor → Memory)",
+            "  Tab         Cycle tabs (Home → Chat → Monitor → Memory → Workflow)",
             "  ↑↓          Navigate agents / scroll chat / scroll memory",
             "  Space       Multi-select agent (Home tab)",
             "  Enter       Send message",

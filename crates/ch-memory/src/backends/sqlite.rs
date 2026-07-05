@@ -788,6 +788,19 @@ mod tests {
         assert_eq!(rows[0].claimed_by.as_deref(), Some("agent-2"));
         assert_eq!(rows[0].state, WorkflowStepState::Claimed);
     }
+
+    #[tokio::test]
+    async fn workflow_all_steps_returns_across_workflows_and_all_states() {
+        let store = fresh_store().await;
+        store.claim_step("wf-a", "step-1", "agent-1").await.unwrap();
+        store.claim_step("wf-b", "step-2", "agent-2").await.unwrap();
+
+        let all = store.all_steps(10).await.unwrap();
+        assert_eq!(all.len(), 2);
+        let ids: Vec<&str> = all.iter().map(|r| r.step_id.as_str()).collect();
+        assert!(ids.contains(&"step-1"));
+        assert!(ids.contains(&"step-2"));
+    }
 }
 
 // ── WorkflowStore impl (Maestro Task 3) ────────────────────────────────────
@@ -876,6 +889,38 @@ impl WorkflowStore for SqliteMemoryStore {
                 claimed_by: cb,
                 // Pending steps haven't been claimed; claimed_at is NULL.
                 claimed_at: None,
+            })
+            .collect())
+    }
+
+    async fn all_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>> {
+        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
+            "SELECT step_id, workflow_id, state, claimed_by, claimed_at \
+             FROM workflow_steps ORDER BY claimed_at DESC NULLS LAST LIMIT ?",
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| MemoryError::Backend(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(sid, wid, st, cb, ca)| WorkflowStepRow {
+                step_id: sid,
+                workflow_id: wid,
+                state: match st.as_str() {
+                    "claimed" => WorkflowStepState::Claimed,
+                    "in_progress" => WorkflowStepState::InProgress,
+                    "done" => WorkflowStepState::Done,
+                    "failed" => WorkflowStepState::Failed,
+                    _ => WorkflowStepState::Pending,
+                },
+                claimed_by: cb,
+                claimed_at: ca.map(|s| {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc)
+                }),
             })
             .collect())
     }
