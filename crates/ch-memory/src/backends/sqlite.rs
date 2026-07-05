@@ -801,6 +801,36 @@ mod tests {
         assert!(ids.contains(&"step-1"));
         assert!(ids.contains(&"step-2"));
     }
+
+    #[tokio::test]
+    async fn workflow_set_state_transitions_claimed_to_done() {
+        let store = fresh_store().await;
+        store.claim_step("wf-6", "step-r", "agent-1").await.unwrap();
+
+        store
+            .set_state("step-r", WorkflowStepState::InProgress)
+            .await
+            .unwrap();
+        let rows = store.by_workflow("wf-6").await.unwrap();
+        assert_eq!(rows[0].state, WorkflowStepState::InProgress);
+
+        store
+            .set_state("step-r", WorkflowStepState::Done)
+            .await
+            .unwrap();
+        let rows = store.by_workflow("wf-6").await.unwrap();
+        assert_eq!(rows[0].state, WorkflowStepState::Done);
+    }
+
+    #[tokio::test]
+    async fn workflow_set_state_unknown_step_returns_not_found() {
+        let store = fresh_store().await;
+        let err = store
+            .set_state("no-such-step", WorkflowStepState::Done)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MemoryError::NotFound(_)));
+    }
 }
 
 // ── WorkflowStore impl (Maestro Task 3) ────────────────────────────────────
@@ -852,6 +882,9 @@ impl WorkflowStore for SqliteMemoryStore {
                 workflow_id: wid,
                 state: match st.as_str() {
                     "claimed" => WorkflowStepState::Claimed,
+                    "in_progress" => WorkflowStepState::InProgress,
+                    "done" => WorkflowStepState::Done,
+                    "failed" => WorkflowStepState::Failed,
                     _ => WorkflowStepState::Pending,
                 },
                 claimed_by: cb,
@@ -923,5 +956,25 @@ impl WorkflowStore for SqliteMemoryStore {
                 }),
             })
             .collect())
+    }
+
+    async fn set_state(&self, step_id: &str, state: WorkflowStepState) -> Result<()> {
+        let state_str = match state {
+            WorkflowStepState::Pending => "pending",
+            WorkflowStepState::Claimed => "claimed",
+            WorkflowStepState::InProgress => "in_progress",
+            WorkflowStepState::Done => "done",
+            WorkflowStepState::Failed => "failed",
+        };
+        let result = sqlx::query("UPDATE workflow_steps SET state = ? WHERE step_id = ?")
+            .bind(state_str)
+            .bind(step_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| MemoryError::Backend(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(MemoryError::NotFound(step_id.to_string()));
+        }
+        Ok(())
     }
 }

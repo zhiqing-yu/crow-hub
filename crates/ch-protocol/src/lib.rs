@@ -87,6 +87,9 @@ pub enum MessageType {
     EvidenceVerify,
     /// Agent claims a workflow step (Pending -> Claimed).  Maestro Task 3.
     WorkflowClaim,
+    /// Agent moves a workflow step to a new state (Claimed -> InProgress,
+    /// InProgress -> Done|Failed).  Maestro Task 3 follow-up.
+    WorkflowUpdate,
     /// Custom message type
     Custom(String),
 }
@@ -229,6 +232,8 @@ pub enum Payload {
     /// failed.  Maestro Task 2.
     EvidenceVerify(EvidenceVerifyMsg),
     WorkflowClaim(WorkflowClaimMsg),
+    /// Moves a claimed step to a new state.  Maestro Task 3 follow-up.
+    WorkflowUpdate(WorkflowUpdateMsg),
     /// Empty payload
     Empty,
 }
@@ -636,6 +641,40 @@ mod tests {
         assert_eq!(back.claim, "c");
         assert!(back.witness.is_none());
     }
+
+    #[test]
+    fn payload_workflow_update_round_trip_in_message() {
+        for (state, reason) in [
+            (crate::types::WorkflowStepState::InProgress, None),
+            (
+                crate::types::WorkflowStepState::Failed,
+                Some("timed out".to_string()),
+            ),
+        ] {
+            let u = WorkflowUpdateMsg {
+                step_id: "step-1".to_string(),
+                state,
+                agent_id: "agent-1".to_string(),
+                reason: reason.clone(),
+            };
+            let from = AgentAddress::new("agent-1", "api");
+            let msg = AgentMessage::new(
+                from,
+                None,
+                MessageType::WorkflowUpdate,
+                Payload::WorkflowUpdate(u),
+            );
+            let json = serde_json::to_string(&msg).unwrap();
+            let back: AgentMessage = serde_json::from_str(&json).unwrap();
+            if let Payload::WorkflowUpdate(u) = back.payload {
+                assert_eq!(u.step_id, "step-1");
+                assert_eq!(u.state, state);
+                assert_eq!(u.reason, reason);
+            } else {
+                panic!("expected Payload::WorkflowUpdate after round-trip");
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -643,4 +682,15 @@ pub struct WorkflowClaimMsg {
     pub step_id: String,
     pub workflow_id: String,
     pub agent_id: String,
+}
+
+/// Moves a step already in the `workflow_steps` table to a new state.
+/// `agent_id` records who performed the transition; `reason` is only
+/// meaningful (and only stored) when `state` is `Failed`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowUpdateMsg {
+    pub step_id: String,
+    pub state: crate::types::WorkflowStepState,
+    pub agent_id: String,
+    pub reason: Option<String>,
 }

@@ -455,4 +455,8 @@ pub trait WorkflowStore: Send + Sync {
     /// All steps across all workflows, newest-claimed first.  Used by the
     /// Workflow TUI tab to show the full picture regardless of state.
     async fn all_steps(&self, limit: usize) -> Result<Vec<WorkflowStepRow>>;
+    /// Move an existing step to a new state (e.g. Claimed -> InProgress,
+    /// InProgress -> Done|Failed).  Returns `NotFound` if `step_id` doesn't
+    /// exist.  Unlike `claim_step`, this does not touch `claimed_by`.
+    async fn set_state(&self, step_id: &str, state: ch_protocol::WorkflowStepState) -> Result<()>;
 }
